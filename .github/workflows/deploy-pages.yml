@@ -29,6 +29,9 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Ensure tool-tool is executable
+        run: chmod +x tool-tool
+
       - name: Install dependencies
         run: |
           cd ui

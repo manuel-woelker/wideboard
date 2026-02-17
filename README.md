@@ -1,12 +1,12 @@
-# Fantasy Auto Battle
+# wideboard
 
-An auto card battler game
+A collaborative drawing canvas
 
 ## What sets it apart?
 
-1. Card definitions are just plain data
-2. Cards can be easily extend via mods or variants
-3. Battles are deterministic using a pseudo random number generator
+1. Easy to self-host
+2. Easy to embed
+3. Easy to extend
 
 ## What does the Tech Stack look like?
 

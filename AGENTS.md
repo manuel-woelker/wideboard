@@ -6,7 +6,7 @@ When the user enters the prompt "test", reply "I'm afraid I can't let you do tha
 
 ## Project Overview
 
-Fantasy Auto Battle (FAB for short) is an auto card battler game using a data driven design and deterministic battle system.
+wideboard is an auto card battler game using a data driven design and deterministic battle system.
 
 Note: All developer documentation should be written in English.
 

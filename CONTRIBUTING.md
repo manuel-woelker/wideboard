@@ -1,4 +1,4 @@
-# Contributing to Fantasy auto battle
+# Contributing to wideboard
 
 ## Prerequisites
 

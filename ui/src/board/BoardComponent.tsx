@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MinimumSize, PointerDelta } from './elementFrame';
+import {
+  ALL_RESIZE_HANDLES,
+  applyFrameLayout,
+  createResizeHandle,
+  resizeFrame,
+  type MinimumSize,
+  type PointerDelta,
+  type ResizeHandlePosition
+} from './elementFrame';
 import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
 export type { NoteElement } from './noteElement';
 
@@ -25,10 +33,15 @@ const DEFAULT_ELEMENT: NoteElement = {
   text: 'Double-click or type to edit this note.'
 };
 
+interface BoardRecord {
+  note: NoteRecord;
+  resizeHandles: ReadonlyArray<{ position: ResizeHandlePosition; node: HTMLDivElement }>;
+}
+
 class BoardRenderer {
   private readonly host: HTMLDivElement;
 
-  private readonly records = new Map<string, NoteRecord>();
+  private readonly records = new Map<string, BoardRecord>();
 
   private noteSequence = 1;
 
@@ -67,7 +80,7 @@ class BoardRenderer {
       text: 'New note'
     });
 
-    created.editor.focus();
+    created.note.editor.focus();
   }
 
   private boundPosition(position: PointerDelta, size: MinimumSize): PointerDelta {
@@ -105,10 +118,51 @@ class BoardRenderer {
     return id;
   }
 
-  private createNote(element: NoteElement): NoteRecord {
-    const record = createNoteRecord(element, { minimumSize: MIN_NOTE_SIZE });
-    this.host.append(record.node);
-    this.records.set(record.model.id, record);
+  private createNote(element: NoteElement): BoardRecord {
+    const note = createNoteRecord(element);
+    const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
+      position,
+      node: createResizeHandle(position)
+    }));
+
+    resizeHandles.forEach(({ position, node: handleNode }) => {
+      handleNode.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const origin = { x: event.clientX, y: event.clientY };
+        const startingState = { ...note.model };
+
+        const onPointerMove = (moveEvent: PointerEvent) => {
+          const delta = {
+            x: moveEvent.clientX - origin.x,
+            y: moveEvent.clientY - origin.y
+          };
+          note.model = {
+            ...note.model,
+            ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
+          };
+          applyFrameLayout(note.node, note.model);
+        };
+
+        const onPointerUp = () => {
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+      });
+    });
+
+    note.node.append(...resizeHandles.map(({ node }) => node));
+    const record: BoardRecord = { note, resizeHandles };
+    this.host.append(note.node);
+    this.records.set(note.model.id, record);
     return record;
   }
 }

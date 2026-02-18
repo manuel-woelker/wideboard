@@ -1,13 +1,4 @@
-import {
-  ALL_RESIZE_HANDLES,
-  applyFrameLayout,
-  createResizeHandle,
-  moveFrame,
-  resizeFrame,
-  type MinimumSize,
-  type PointerDelta,
-  type ResizeHandlePosition
-} from './elementFrame';
+import { applyFrameLayout, moveFrame, type PointerDelta } from './elementFrame';
 
 export interface NoteElement {
   id: string;
@@ -23,21 +14,13 @@ export interface NoteRecord {
   model: NoteElement;
   node: HTMLDivElement;
   editor: HTMLDivElement;
-  resizeHandles: ReadonlyArray<{ position: ResizeHandlePosition; node: HTMLDivElement }>;
-}
-
-export interface CreateNoteRecordOptions {
-  minimumSize: MinimumSize;
 }
 
 /* 📖 # Why isolate note DOM behavior in a separate module?
 Board orchestration should stay focused on element lifecycle and tool actions.
-Moving note-specific rendering and pointer interactions here keeps BoardComponent smaller and easier to extend.
+Note rendering only needs a frame and content; board-level concerns such as resize handles stay outside.
 */
-export function createNoteRecord(
-  element: NoteElement,
-  options: CreateNoteRecordOptions
-): NoteRecord {
+export function createNoteRecord(element: NoteElement): NoteRecord {
   const node = document.createElement('div');
   node.dataset.elementId = element.id;
   node.style.position = 'absolute';
@@ -69,13 +52,8 @@ export function createNoteRecord(
   editor.style.fontSize = '15px';
   editor.dataset.testid = `note-editor-${element.id}`;
 
-  const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
-    position,
-    node: createResizeHandle(position)
-  }));
-
   const model = { ...element };
-  const record: NoteRecord = { model, node, editor, resizeHandles };
+  const record: NoteRecord = { model, node, editor };
   applyFrameLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
@@ -88,14 +66,6 @@ export function createNoteRecord(
     }
 
     const targetNode = event.target as Node;
-    if (
-      resizeHandles.some(
-        ({ node: handleNode }) => targetNode === handleNode || handleNode.contains(targetNode)
-      )
-    ) {
-      return;
-    }
-
     if (targetNode === editor || editor.contains(targetNode)) {
       return;
     }
@@ -125,40 +95,6 @@ export function createNoteRecord(
     window.addEventListener('pointerup', onPointerUp);
   });
 
-  resizeHandles.forEach(({ position, node: handleNode }) => {
-    handleNode.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const origin = { x: event.clientX, y: event.clientY };
-      const startingState = { ...record.model };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        const delta: PointerDelta = {
-          x: moveEvent.clientX - origin.x,
-          y: moveEvent.clientY - origin.y
-        };
-        record.model = {
-          ...record.model,
-          ...resizeFrame(startingState, delta, position, options.minimumSize)
-        };
-        applyFrameLayout(record.node, record.model);
-      };
-
-      const onPointerUp = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', onPointerUp);
-    });
-  });
-
-  node.append(editor, ...resizeHandles.map(({ node: handleNode }) => handleNode));
+  node.append(editor);
   return record;
 }

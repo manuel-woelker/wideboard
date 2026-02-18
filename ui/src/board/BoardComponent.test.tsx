@@ -1,0 +1,47 @@
+import { render, screen } from '@testing-library/react';
+import { BoardComponent, moveElement, resizeElement, type NoteElement } from './BoardComponent';
+
+describe('BoardComponent', () => {
+  const baseNote: NoteElement = {
+    id: 'test-note',
+    kind: 'note',
+    x: 10,
+    y: 20,
+    width: 200,
+    height: 120,
+    text: 'Test note'
+  };
+
+  it('renders note text with imperative board rendering', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    expect(screen.getByText('Test note')).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      { x: 20, y: -5 },
+      { x: 30, y: 15 }
+    ],
+    [
+      { x: -10, y: 10 },
+      { x: 0, y: 30 }
+    ]
+  ])('moves note by pointer delta %j', (delta, expectedPosition) => {
+    const moved = moveElement(baseNote, delta);
+    expect({ x: moved.x, y: moved.y }).toEqual(expectedPosition);
+  });
+
+  it.each([
+    [
+      { x: 20, y: 30 },
+      { width: 220, height: 150 }
+    ],
+    [
+      { x: -500, y: -500 },
+      { width: 120, height: 80 }
+    ]
+  ])('resizes note with constraints for delta %j', (delta, expectedSize) => {
+    const resized = resizeElement(baseNote, delta);
+    expect({ width: resized.width, height: resized.height }).toEqual(expectedSize);
+  });
+});

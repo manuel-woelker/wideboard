@@ -2,15 +2,13 @@ import { render, screen } from '@testing-library/react';
 import { App } from './App';
 
 describe('App', () => {
-  it('renders the app heading', () => {
+  it('renders the board heading', () => {
     render(<App />);
-    expect(screen.getByRole('heading', { name: 'wideboard UI' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'wideboard Board' })).toBeInTheDocument();
   });
 
-  it('renders a stack badge', () => {
+  it('renders the note element text', () => {
     render(<App />);
-    expect(screen.getByTestId('stack-badge')).toHaveTextContent(
-      'Vite + React + TS + Vitest + Emotion'
-    );
+    expect(screen.getByText(/Welcome to wideboard\./)).toBeInTheDocument();
   });
 });

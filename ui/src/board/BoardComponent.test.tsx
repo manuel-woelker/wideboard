@@ -17,6 +17,11 @@ describe('BoardComponent', () => {
     expect(screen.getByText('Test note')).toBeInTheDocument();
   });
 
+  it('sets the board id on the host container', () => {
+    render(<BoardComponent boardId="custom-board" initialElements={[baseNote]} />);
+    expect(screen.getByTestId('board-component')).toHaveAttribute('data-board-id', 'custom-board');
+  });
+
   it.each([
     [
       { x: 20, y: -5 },

@@ -1,17 +1,27 @@
 import styled from '@emotion/styled';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
 
-const BOARD_ELEMENTS: BoardElement[] = [
-  {
-    id: 'welcome-note',
-    kind: 'note',
-    x: 100,
-    y: 90,
-    width: 320,
-    height: 220,
-    text: 'Welcome to wideboard.\nDrag this note, resize it, and edit the text.'
-  }
-];
+interface BoardModel {
+  id: string;
+  name: string;
+  elements: BoardElement[];
+}
+
+const DEFAULT_BOARD: BoardModel = {
+  id: 'welcome',
+  name: 'Welcome',
+  elements: [
+    {
+      id: 'welcome-note',
+      kind: 'note',
+      x: 100,
+      y: 90,
+      width: 320,
+      height: 220,
+      text: 'Welcome to wideboard.\nDrag this note, resize it, and edit the text.'
+    }
+  ]
+};
 
 const Shell = styled.main`
   min-height: 100vh;
@@ -37,8 +47,8 @@ const OverlayTitle = styled.h1`
 export function App() {
   return (
     <Shell>
-      <OverlayTitle>wideboard Board</OverlayTitle>
-      <BoardComponent initialElements={BOARD_ELEMENTS} />
+      <OverlayTitle>{DEFAULT_BOARD.name} board</OverlayTitle>
+      <BoardComponent boardId={DEFAULT_BOARD.id} initialElements={DEFAULT_BOARD.elements} />
     </Shell>
   );
 }

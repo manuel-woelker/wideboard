@@ -13,6 +13,7 @@ export interface NoteElement {
 export type BoardElement = NoteElement;
 
 export interface BoardComponentProps {
+  boardId?: string;
   initialElements?: BoardElement[];
 }
 
@@ -222,7 +223,7 @@ class BoardRenderer {
   }
 }
 
-export function BoardComponent({ initialElements }: BoardComponentProps) {
+export function BoardComponent({ boardId = 'welcome', initialElements }: BoardComponentProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const elementSnapshotRef = useRef<BoardElement[]>(
     initialElements?.map((item) => ({ ...item })) ?? [{ ...DEFAULT_ELEMENT }]
@@ -238,5 +239,5 @@ export function BoardComponent({ initialElements }: BoardComponentProps) {
     return () => renderer.destroy();
   }, []);
 
-  return <div ref={hostRef} data-testid="board-component" />;
+  return <div ref={hostRef} data-testid="board-component" data-board-id={boardId} />;
 }

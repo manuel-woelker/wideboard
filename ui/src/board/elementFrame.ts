@@ -97,52 +97,52 @@ export function createResizeHandle(position: ResizeHandlePosition) {
   handle.style.zIndex = '2';
 
   if (position === 'top-left') {
-    handle.style.left = '2px';
-    handle.style.top = '2px';
+    handle.style.left = '-8px';
+    handle.style.top = '-8px';
     handle.style.width = '16px';
     handle.style.height = '16px';
     handle.style.cursor = 'nwse-resize';
   } else if (position === 'top') {
     handle.style.left = '50%';
-    handle.style.top = '2px';
+    handle.style.top = '-4px';
     handle.style.transform = 'translateX(-50%)';
     handle.style.width = '26px';
     handle.style.height = '8px';
     handle.style.cursor = 'ns-resize';
   } else if (position === 'top-right') {
-    handle.style.right = '2px';
-    handle.style.top = '2px';
+    handle.style.right = '-8px';
+    handle.style.top = '-8px';
     handle.style.width = '16px';
     handle.style.height = '16px';
     handle.style.cursor = 'nesw-resize';
   } else if (position === 'right') {
-    handle.style.right = '2px';
+    handle.style.right = '-4px';
     handle.style.top = '50%';
     handle.style.transform = 'translateY(-50%)';
     handle.style.width = '8px';
     handle.style.height = '26px';
     handle.style.cursor = 'ew-resize';
   } else if (position === 'bottom-right') {
-    handle.style.right = '2px';
-    handle.style.bottom = '2px';
+    handle.style.right = '-8px';
+    handle.style.bottom = '-8px';
     handle.style.width = '16px';
     handle.style.height = '16px';
     handle.style.cursor = 'nwse-resize';
   } else if (position === 'bottom') {
     handle.style.left = '50%';
-    handle.style.bottom = '2px';
+    handle.style.bottom = '-4px';
     handle.style.transform = 'translateX(-50%)';
     handle.style.width = '26px';
     handle.style.height = '8px';
     handle.style.cursor = 'ns-resize';
   } else if (position === 'bottom-left') {
-    handle.style.left = '2px';
-    handle.style.bottom = '2px';
+    handle.style.left = '-8px';
+    handle.style.bottom = '-8px';
     handle.style.width = '16px';
     handle.style.height = '16px';
     handle.style.cursor = 'nesw-resize';
   } else if (position === 'left') {
-    handle.style.left = '2px';
+    handle.style.left = '-4px';
     handle.style.top = '50%';
     handle.style.transform = 'translateY(-50%)';
     handle.style.width = '8px';

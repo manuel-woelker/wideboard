@@ -43,6 +43,8 @@ class BoardRenderer {
 
   private readonly records = new Map<string, BoardRecord>();
 
+  private activeNoteId: string | null = null;
+
   private noteSequence = 1;
 
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
@@ -80,7 +82,12 @@ class BoardRenderer {
       text: 'New note'
     });
 
+    this.setActiveNote(created.note.model.id);
     created.note.editor.focus();
+  }
+
+  public clearActiveNote() {
+    this.setActiveNote(null);
   }
 
   private boundPosition(position: PointerDelta, size: MinimumSize): PointerDelta {
@@ -116,6 +123,25 @@ class BoardRenderer {
     const id = `note-${this.noteSequence}`;
     this.noteSequence += 1;
     return id;
+  }
+
+  /* 📖 # Why render resize handles only for the active note?
+  Showing handles for every note creates visual noise and makes intent unclear.
+  Keeping handles mounted only on the active note matches direct-manipulation UX patterns.
+  */
+  private setActiveNote(noteId: string | null) {
+    this.activeNoteId = noteId;
+    this.records.forEach((record, recordId) => {
+      const isActive = noteId === recordId;
+      record.resizeHandles.forEach(({ node }) => {
+        const isAttached = node.parentElement === record.note.node;
+        if (isActive && !isAttached) {
+          record.note.node.append(node);
+        } else if (!isActive && isAttached) {
+          node.remove();
+        }
+      });
+    });
   }
 
   private createNote(element: NoteElement): BoardRecord {
@@ -159,10 +185,16 @@ class BoardRenderer {
       });
     });
 
-    note.node.append(...resizeHandles.map(({ node }) => node));
+    note.node.addEventListener('pointerdown', () => {
+      this.setActiveNote(note.model.id);
+    });
+
     const record: BoardRecord = { note, resizeHandles };
     this.host.append(note.node);
     this.records.set(note.model.id, record);
+    if (this.activeNoteId === null) {
+      this.setActiveNote(note.model.id);
+    }
     return record;
   }
 }
@@ -241,16 +273,19 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
         data-testid="board-component"
         data-board-id={boardId}
         onPointerDown={(event) => {
+          const renderer = rendererRef.current;
+          if (!renderer) {
+            return;
+          }
+
           if (!isAddingNote) {
+            if (event.target === event.currentTarget) {
+              renderer.clearActiveNote();
+            }
             return;
           }
 
           if (event.target !== event.currentTarget) {
-            return;
-          }
-
-          const renderer = rendererRef.current;
-          if (!renderer) {
             return;
           }
 

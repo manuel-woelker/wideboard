@@ -11,6 +11,15 @@ describe('BoardComponent', () => {
     height: 120,
     text: 'Test note'
   };
+  const secondNote: NoteElement = {
+    id: 'test-note-2',
+    kind: 'note',
+    x: 260,
+    y: 180,
+    width: 200,
+    height: 120,
+    text: 'Second note'
+  };
 
   it('renders note text with imperative board rendering', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
@@ -22,10 +31,20 @@ describe('BoardComponent', () => {
     expect(screen.queryByTestId('note-drag-handle-test-note')).not.toBeInTheDocument();
   });
 
-  it('renders eight resize handles for each note element', () => {
-    render(<BoardComponent initialElements={[baseNote]} />);
-    const noteNode = document.querySelector('[data-element-id="test-note"]');
-    expect(noteNode?.querySelectorAll('[data-resize-handle]').length).toBe(8);
+  it('shows resize handles only on the active note', () => {
+    render(<BoardComponent initialElements={[baseNote, secondNote]} />);
+    const firstNoteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const secondNoteNode = document.querySelector(
+      '[data-element-id="test-note-2"]'
+    ) as HTMLDivElement;
+
+    expect(firstNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(8);
+    expect(secondNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(0);
+
+    fireEvent.pointerDown(secondNoteNode, { button: 0, clientX: 300, clientY: 200 });
+
+    expect(firstNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(0);
+    expect(secondNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(8);
   });
 
   it('sets the board id on the host container', () => {

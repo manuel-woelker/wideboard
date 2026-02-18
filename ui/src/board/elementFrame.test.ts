@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { moveFrame, resizeFrame, type FrameRect, type ResizeHandlePosition } from './elementFrame';
+import {
+  createResizeHandle,
+  moveFrame,
+  resizeFrame,
+  type FrameRect,
+  type ResizeHandlePosition
+} from './elementFrame';
 
 describe('elementFrame', () => {
   const baseFrame: FrameRect = {
@@ -41,5 +47,24 @@ describe('elementFrame', () => {
   ])('resizes frame from %s handle', (handle, delta, expectedFrame) => {
     const resized = resizeFrame(baseFrame, delta, handle, { width: 120, height: 80 });
     expect(resized).toEqual(expectedFrame);
+  });
+
+  it.each<[ResizeHandlePosition, { left?: string; right?: string; top?: string; bottom?: string }]>(
+    [
+      ['top-left', { left: '-8px', top: '-8px' }],
+      ['top', { left: '50%', top: '-4px' }],
+      ['top-right', { right: '-8px', top: '-8px' }],
+      ['right', { right: '-4px', top: '50%' }],
+      ['bottom-right', { right: '-8px', bottom: '-8px' }],
+      ['bottom', { left: '50%', bottom: '-4px' }],
+      ['bottom-left', { left: '-8px', bottom: '-8px' }],
+      ['left', { left: '-4px', top: '50%' }]
+    ]
+  )('positions %s resize handle centered on frame edge', (position, expectedOffsets) => {
+    const handle = createResizeHandle(position);
+    expect(handle.style.left).toBe(expectedOffsets.left ?? '');
+    expect(handle.style.right).toBe(expectedOffsets.right ?? '');
+    expect(handle.style.top).toBe(expectedOffsets.top ?? '');
+    expect(handle.style.bottom).toBe(expectedOffsets.bottom ?? '');
   });
 });

@@ -1,4 +1,4 @@
-name: Deploy UI to GitHub Pages
+name: Deploy UI and Storybook to GitHub Pages
 
 on:
   push:
@@ -43,10 +43,20 @@ jobs:
           ../tool-tool pnpm exec tsc -b
           ../tool-tool pnpm exec vite build --base="/${{ github.event.repository.name }}/"
 
+      - name: Build Storybook
+        run: |
+          cd ui
+          STORYBOOK_BASE_PATH="/${{ github.event.repository.name }}/storybook/" ../tool-tool pnpm exec storybook build --output-dir ../pages/storybook
+
+      - name: Assemble Pages artifact
+        run: |
+          mkdir -p pages
+          cp -R ui/dist/. pages/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ui/dist
+          path: pages
 
       - name: Deploy to GitHub Pages
         id: deployment

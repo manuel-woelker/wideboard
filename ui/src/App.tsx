@@ -1,3 +1,4 @@
+import { Global, css } from '@emotion/react';
 import styled from '@emotion/styled';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
 
@@ -47,6 +48,19 @@ const OverlayTitle = styled.h1`
 export function App() {
   return (
     <Shell>
+      <Global
+        styles={css`
+          html,
+          body,
+          #root {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+          }
+        `}
+      />
       <OverlayTitle>{DEFAULT_BOARD.name} board</OverlayTitle>
       <BoardComponent boardId={DEFAULT_BOARD.id} initialElements={DEFAULT_BOARD.elements} />
     </Shell>

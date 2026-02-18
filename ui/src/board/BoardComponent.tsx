@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface NoteElement {
   id: string;
@@ -99,20 +99,29 @@ class BoardRenderer {
     this.host.replaceChildren();
   }
 
-  public createTextNote() {
-    const existingCount = this.records.size;
-    const offset = (existingCount % 6) * 26;
+  public createTextNoteAt(position: Point) {
+    const boundedPosition = this.boundPosition(position, { width: 260, height: 170 });
     const created = this.createNote({
       id: this.generateNoteId(),
       kind: 'note',
-      x: 96 + offset,
-      y: 92 + offset,
+      x: boundedPosition.x,
+      y: boundedPosition.y,
       width: 260,
       height: 170,
       text: 'New note'
     });
 
     created.editor.focus();
+  }
+
+  private boundPosition(position: Point, size: Size): Point {
+    const hostWidth = this.host.clientWidth;
+    const hostHeight = this.host.clientHeight;
+
+    return {
+      x: Math.max(0, Math.min(position.x, Math.max(0, hostWidth - size.width))),
+      y: Math.max(0, Math.min(position.y, Math.max(0, hostHeight - size.height)))
+    };
   }
 
   private deriveInitialNoteSequence(elements: BoardElement[]) {
@@ -272,6 +281,7 @@ class BoardRenderer {
 export function BoardComponent({ boardId = 'welcome', initialElements }: BoardComponentProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
+  const [isAddingNote, setIsAddingNote] = useState(false);
   const elementSnapshotRef = useRef<BoardElement[]>(
     initialElements?.map((item) => ({ ...item })) ?? [{ ...DEFAULT_ELEMENT }]
   );
@@ -291,8 +301,11 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
     };
   }, []);
 
+  const noteCursor =
+    'url(\'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="28" height="32" viewBox="0 0 28 32"%3E%3Cpath d="M4 1h20a3 3 0 0 1 3 3v15l-8 11H4a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="%23f6e7c8" stroke="%232f2618" stroke-width="2"/%3E%3Cpath d="M19 19h8l-8 11z" fill="%23e0d2b7"/%3E%3C/svg%3E\') 4 2, crosshair';
+
   return (
-    <div style={{ position: 'relative', width: '100%', minHeight: '100vh' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       {/* 📖 # Why keep toolbar UI in React while notes render imperatively?
       The toolbar changes infrequently and benefits from declarative React handlers,
       while note movement and resizing stay in the imperative renderer for direct DOM updates.
@@ -319,12 +332,13 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
         <button
           type="button"
           data-testid="create-note-action"
-          onClick={() => rendererRef.current?.createTextNote()}
+          aria-pressed={isAddingNote}
+          onClick={() => setIsAddingNote((value) => !value)}
           style={{
             border: 'none',
             borderRadius: '8px',
             padding: '0.5rem 0.72rem',
-            background: '#f6e7c8',
+            background: isAddingNote ? '#e8cf9c' : '#f6e7c8',
             color: '#2f2618',
             fontWeight: '600',
             cursor: 'pointer'
@@ -337,7 +351,28 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
         ref={hostRef}
         data-testid="board-component"
         data-board-id={boardId}
-        style={{ width: '100%', height: '100%' }}
+        onPointerDown={(event) => {
+          if (!isAddingNote) {
+            return;
+          }
+
+          if (event.target !== event.currentTarget) {
+            return;
+          }
+
+          const renderer = rendererRef.current;
+          if (!renderer) {
+            return;
+          }
+
+          const bounds = event.currentTarget.getBoundingClientRect();
+          renderer.createTextNoteAt({
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top
+          });
+          setIsAddingNote(false);
+        }}
+        style={{ width: '100%', height: '100vh', cursor: isAddingNote ? noteCursor : 'default' }}
       />
     </div>
   );

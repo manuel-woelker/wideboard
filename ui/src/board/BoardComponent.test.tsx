@@ -27,10 +27,28 @@ describe('BoardComponent', () => {
     expect(screen.getByRole('toolbar', { name: 'Board tools' })).toBeInTheDocument();
   });
 
-  it('creates a text note from the toolbar action', () => {
+  it('enters note adding mode from the toolbar action', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
-    fireEvent.click(screen.getByTestId('create-note-action'));
+    const action = screen.getByTestId('create-note-action');
+    const board = screen.getByTestId('board-component');
+
+    fireEvent.click(action);
+
+    expect(action).toHaveAttribute('aria-pressed', 'true');
+    expect(board.getAttribute('style')).toContain('data:image/svg+xml');
+  });
+
+  it('creates a text note on canvas click when in note adding mode', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const action = screen.getByTestId('create-note-action');
+    const board = screen.getByTestId('board-component');
+
+    fireEvent.click(action);
+    expect(action).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.pointerDown(board, { button: 0, clientX: 260, clientY: 200 });
+
     expect(screen.getByText('New note')).toBeInTheDocument();
+    expect(action).toHaveAttribute('aria-pressed', 'false');
   });
 
   it.each([

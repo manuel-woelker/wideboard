@@ -37,8 +37,8 @@ const OverlayTitle = styled.h1`
   margin: 0;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
-  background: rgba(37, 31, 19, 0.84);
-  color: #fbf7ef;
+  background: rgba(18, 58, 92, 0.88);
+  color: #eaf8ff;
   font-size: 0.9rem;
   letter-spacing: 0.02em;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;

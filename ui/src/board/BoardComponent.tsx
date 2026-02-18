@@ -54,7 +54,7 @@ class BoardRenderer {
     this.host.style.height = '100%';
     this.host.style.overflow = 'hidden';
     this.host.style.background =
-      'radial-gradient(circle at 20% 0%, #f8f3e8 0%, #efe7d5 40%, #e0d2b7 100%)';
+      'radial-gradient(circle at 16% 0%, #ecfbff 0%, #d6f4ff 42%, #bdddf5 100%)';
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
 
@@ -223,7 +223,7 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
   }, []);
 
   const noteCursor =
-    'url(\'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="28" height="32" viewBox="0 0 28 32"%3E%3Cpath d="M4 1h20a3 3 0 0 1 3 3v15l-8 11H4a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="%23f6e7c8" stroke="%232f2618" stroke-width="2"/%3E%3Cpath d="M19 19h8l-8 11z" fill="%23e0d2b7"/%3E%3C/svg%3E\') 4 2, crosshair';
+    'url(\'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="28" height="32" viewBox="0 0 28 32"%3E%3Cpath d="M4 1h20a3 3 0 0 1 3 3v15l-8 11H4a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="%23dff7ff" stroke="%23194467" stroke-width="2"/%3E%3Cpath d="M19 19h8l-8 11z" fill="%23b7dff7"/%3E%3C/svg%3E\') 4 2, crosshair';
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
@@ -245,8 +245,8 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
           gap: '0.55rem',
           padding: '0.65rem',
           borderRadius: '12px',
-          background: 'rgba(37, 31, 19, 0.8)',
-          boxShadow: '0 14px 30px rgba(26, 20, 12, 0.24)',
+          background: 'rgba(22, 52, 84, 0.84)',
+          boxShadow: '0 14px 30px rgba(14, 45, 82, 0.3)',
           zIndex: '20'
         }}
       >
@@ -259,8 +259,8 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
             border: 'none',
             borderRadius: '8px',
             padding: '0.5rem 0.72rem',
-            background: isAddingNote ? '#e8cf9c' : '#f6e7c8',
-            color: '#2f2618',
+            background: isAddingNote ? '#79dbff' : '#d7f3ff',
+            color: '#123c63',
             fontWeight: '600',
             cursor: 'pointer'
           }}

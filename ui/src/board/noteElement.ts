@@ -25,10 +25,10 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   node.dataset.elementId = element.id;
   node.style.position = 'absolute';
   node.style.boxSizing = 'border-box';
-  node.style.border = '1px solid rgba(53, 42, 27, 0.35)';
+  node.style.border = '1px solid rgba(25, 79, 125, 0.32)';
   node.style.borderRadius = '10px';
-  node.style.background = 'rgba(255, 255, 255, 0.93)';
-  node.style.boxShadow = '0 10px 24px rgba(53, 42, 27, 0.16)';
+  node.style.background = 'rgba(247, 253, 255, 0.95)';
+  node.style.boxShadow = '0 10px 24px rgba(25, 79, 125, 0.14)';
   node.style.touchAction = 'none';
   node.style.userSelect = 'none';
   node.style.cursor = 'grab';
@@ -48,7 +48,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   editor.style.userSelect = 'text';
   editor.style.whiteSpace = 'pre-wrap';
   editor.style.fontFamily = '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif';
-  editor.style.color = '#2f2618';
+  editor.style.color = '#133a5d';
   editor.style.lineHeight = '1.45';
   editor.style.fontSize = '15px';
   editor.dataset.testid = `note-editor-${element.id}`;

@@ -92,7 +92,7 @@ export function createResizeHandle(position: ResizeHandlePosition) {
   handle.dataset.resizeHandle = position;
   handle.style.position = 'absolute';
   handle.style.borderRadius = '4px';
-  handle.style.background = 'rgba(47, 38, 24, 0.44)';
+  handle.style.background = 'rgba(22, 95, 153, 0.52)';
   handle.style.touchAction = 'none';
   handle.style.zIndex = '2';
 

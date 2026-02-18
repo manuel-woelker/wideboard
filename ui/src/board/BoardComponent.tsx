@@ -1,4 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  ALL_RESIZE_HANDLES,
+  applyFrameLayout,
+  createResizeHandle,
+  moveFrame,
+  resizeFrame,
+  type FrameRect,
+  type MinimumSize,
+  type PointerDelta,
+  type ResizeHandlePosition
+} from './elementFrame';
 
 export interface NoteElement {
   id: string;
@@ -17,17 +28,7 @@ export interface BoardComponentProps {
   initialElements?: BoardElement[];
 }
 
-interface Point {
-  x: number;
-  y: number;
-}
-
-interface Size {
-  width: number;
-  height: number;
-}
-
-const MIN_NOTE_SIZE: Size = {
+const MIN_NOTE_SIZE: MinimumSize = {
   width: 120,
   height: 80
 };
@@ -46,27 +47,7 @@ interface NoteRecord {
   model: NoteElement;
   node: HTMLDivElement;
   editor: HTMLDivElement;
-  resizeHandle: HTMLDivElement;
-}
-
-export function moveElement(element: NoteElement, pointerDelta: Point): NoteElement {
-  return {
-    ...element,
-    x: element.x + pointerDelta.x,
-    y: element.y + pointerDelta.y
-  };
-}
-
-export function resizeElement(
-  element: NoteElement,
-  pointerDelta: Point,
-  minimumSize: Size = MIN_NOTE_SIZE
-): NoteElement {
-  return {
-    ...element,
-    width: Math.max(minimumSize.width, element.width + pointerDelta.x),
-    height: Math.max(minimumSize.height, element.height + pointerDelta.y)
-  };
+  resizeHandles: ReadonlyArray<{ position: ResizeHandlePosition; node: HTMLDivElement }>;
 }
 
 class BoardRenderer {
@@ -99,7 +80,7 @@ class BoardRenderer {
     this.host.replaceChildren();
   }
 
-  public createTextNoteAt(position: Point) {
+  public createTextNoteAt(position: PointerDelta) {
     const boundedPosition = this.boundPosition(position, { width: 260, height: 170 });
     const created = this.createNote({
       id: this.generateNoteId(),
@@ -114,7 +95,7 @@ class BoardRenderer {
     created.editor.focus();
   }
 
-  private boundPosition(position: Point, size: Size): Point {
+  private boundPosition(position: PointerDelta, size: MinimumSize): PointerDelta {
     const hostWidth = this.host.clientWidth;
     const hostHeight = this.host.clientHeight;
 
@@ -181,18 +162,13 @@ class BoardRenderer {
     editor.style.fontSize = '15px';
     editor.dataset.testid = `note-editor-${element.id}`;
 
-    const resizeHandle = document.createElement('div');
-    resizeHandle.style.position = 'absolute';
-    resizeHandle.style.right = '2px';
-    resizeHandle.style.bottom = '2px';
-    resizeHandle.style.width = '16px';
-    resizeHandle.style.height = '16px';
-    resizeHandle.style.borderRadius = '4px';
-    resizeHandle.style.background = 'rgba(47, 38, 24, 0.4)';
-    resizeHandle.style.cursor = 'nwse-resize';
+    const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
+      position,
+      node: createResizeHandle(position)
+    }));
 
     const model = { ...element };
-    const record: NoteRecord = { model, node, editor, resizeHandle };
+    const record: NoteRecord = { model, node, editor, resizeHandles };
     this.applyLayout(record);
 
     editor.addEventListener('input', () => {
@@ -205,7 +181,11 @@ class BoardRenderer {
       }
 
       const targetNode = event.target as Node;
-      if (targetNode === resizeHandle || resizeHandle.contains(targetNode)) {
+      if (
+        resizeHandles.some(
+          ({ node: handleNode }) => targetNode === handleNode || handleNode.contains(targetNode)
+        )
+      ) {
         return;
       }
 
@@ -222,36 +202,10 @@ class BoardRenderer {
           x: moveEvent.clientX - origin.x,
           y: moveEvent.clientY - origin.y
         };
-        record.model = moveElement(startingState, delta);
-        this.applyLayout(record);
-      };
-
-      const onPointerUp = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', onPointerUp);
-    });
-
-    resizeHandle.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const origin = { x: event.clientX, y: event.clientY };
-      const startingState = { ...record.model };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        const delta = {
-          x: moveEvent.clientX - origin.x,
-          y: moveEvent.clientY - origin.y
+        record.model = {
+          ...record.model,
+          ...moveFrame(startingState, delta)
         };
-        record.model = resizeElement(startingState, delta);
         this.applyLayout(record);
       };
 
@@ -264,17 +218,48 @@ class BoardRenderer {
       window.addEventListener('pointerup', onPointerUp);
     });
 
-    node.append(editor, resizeHandle);
+    resizeHandles.forEach(({ position, node: handleNode }) => {
+      handleNode.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const origin = { x: event.clientX, y: event.clientY };
+        const startingState = { ...record.model };
+
+        const onPointerMove = (moveEvent: PointerEvent) => {
+          const delta = {
+            x: moveEvent.clientX - origin.x,
+            y: moveEvent.clientY - origin.y
+          };
+          record.model = {
+            ...record.model,
+            ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
+          };
+          this.applyLayout(record);
+        };
+
+        const onPointerUp = () => {
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+      });
+    });
+
+    node.append(editor, ...resizeHandles.map(({ node: handleNode }) => handleNode));
     this.host.append(node);
     this.records.set(model.id, record);
     return record;
   }
 
   private applyLayout(record: NoteRecord) {
-    record.node.style.left = `${record.model.x}px`;
-    record.node.style.top = `${record.model.y}px`;
-    record.node.style.width = `${record.model.width}px`;
-    record.node.style.height = `${record.model.height}px`;
+    applyFrameLayout(record.node, record.model as FrameRect);
   }
 }
 

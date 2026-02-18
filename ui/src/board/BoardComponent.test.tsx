@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { BoardComponent, moveElement, resizeElement, type NoteElement } from './BoardComponent';
+import { BoardComponent, type NoteElement } from './BoardComponent';
 
 describe('BoardComponent', () => {
   const baseNote: NoteElement = {
@@ -15,6 +15,12 @@ describe('BoardComponent', () => {
   it('renders note text with imperative board rendering', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     expect(screen.getByText('Test note')).toBeInTheDocument();
+  });
+
+  it('renders eight resize handles for each note element', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const noteNode = document.querySelector('[data-element-id="test-note"]');
+    expect(noteNode?.querySelectorAll('[data-resize-handle]').length).toBe(8);
   });
 
   it('sets the board id on the host container', () => {
@@ -49,33 +55,5 @@ describe('BoardComponent', () => {
 
     expect(screen.getByText('New note')).toBeInTheDocument();
     expect(action).toHaveAttribute('aria-pressed', 'false');
-  });
-
-  it.each([
-    [
-      { x: 20, y: -5 },
-      { x: 30, y: 15 }
-    ],
-    [
-      { x: -10, y: 10 },
-      { x: 0, y: 30 }
-    ]
-  ])('moves note by pointer delta %j', (delta, expectedPosition) => {
-    const moved = moveElement(baseNote, delta);
-    expect({ x: moved.x, y: moved.y }).toEqual(expectedPosition);
-  });
-
-  it.each([
-    [
-      { x: 20, y: 30 },
-      { width: 220, height: 150 }
-    ],
-    [
-      { x: -500, y: -500 },
-      { width: 120, height: 80 }
-    ]
-  ])('resizes note with constraints for delta %j', (delta, expectedSize) => {
-    const resized = resizeElement(baseNote, delta);
-    expect({ width: resized.width, height: resized.height }).toEqual(expectedSize);
   });
 });

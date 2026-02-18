@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",
@@ -20,6 +22,9 @@
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@storybook/addon-a11y": "^10.2.10",
+    "@storybook/addon-docs": "^10.2.10",
+    "@storybook/react-vite": "^10.2.10",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^19.1.10",
@@ -27,6 +32,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "jsdom": "^26.1.0",
     "prettier": "^3.6.2",
+    "storybook": "^10.2.10",
     "typescript": "~5.9.2",
     "vite": "^7.1.2",
     "vitest": "^3.2.4"

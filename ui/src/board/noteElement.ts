@@ -14,7 +14,6 @@ export interface NoteRecord {
   model: NoteElement;
   node: HTMLDivElement;
   editor: HTMLDivElement;
-  dragHandle: HTMLDivElement;
 }
 
 /* 📖 # Why isolate note DOM behavior in a separate module?
@@ -32,6 +31,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   node.style.boxShadow = '0 10px 24px rgba(53, 42, 27, 0.16)';
   node.style.touchAction = 'none';
   node.style.userSelect = 'none';
+  node.style.cursor = 'grab';
 
   const editor = document.createElement('div');
   editor.contentEditable = 'true';
@@ -53,42 +53,42 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   editor.style.fontSize = '15px';
   editor.dataset.testid = `note-editor-${element.id}`;
 
-  const dragHandle = document.createElement('div');
-  dragHandle.dataset.dragHandle = element.id;
-  dragHandle.dataset.testid = `note-drag-handle-${element.id}`;
-  dragHandle.style.position = 'absolute';
-  dragHandle.style.left = '18px';
-  dragHandle.style.top = '8px';
-  dragHandle.style.width = '52px';
-  dragHandle.style.height = '10px';
-  dragHandle.style.borderRadius = '999px';
-  dragHandle.style.background = 'rgba(47, 38, 24, 0.24)';
-  dragHandle.style.cursor = 'grab';
-  dragHandle.style.zIndex = '3';
-
   const model = { ...element };
-  const record: NoteRecord = { model, node, editor, dragHandle };
+  const record: NoteRecord = { model, node, editor };
   applyFrameLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
     model.text = editor.textContent ?? '';
   });
 
-  dragHandle.addEventListener('pointerdown', (event) => {
+  const beginDrag = (event: PointerEvent) => {
     if (event.button !== 0 && event.button !== -1) {
       return;
     }
 
-    event.preventDefault();
-    dragHandle.style.cursor = 'grabbing';
     const origin = { x: event.clientX, y: event.clientY };
     const startingState = { ...record.model };
+    let hasStartedDrag = false;
+
+    node.style.cursor = 'grabbing';
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const delta: PointerDelta = {
         x: moveEvent.clientX - origin.x,
         y: moveEvent.clientY - origin.y
       };
+
+      if (!hasStartedDrag && Math.hypot(delta.x, delta.y) < 3) {
+        return;
+      }
+
+      if (!hasStartedDrag) {
+        hasStartedDrag = true;
+        editor.style.userSelect = 'none';
+        window.getSelection()?.removeAllRanges();
+      }
+
+      moveEvent.preventDefault();
       record.model = {
         ...record.model,
         ...moveFrame(startingState, delta)
@@ -96,16 +96,35 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
       applyFrameLayout(record.node, record.model);
     };
 
+    const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : null;
+
     const onPointerUp = () => {
-      dragHandle.style.cursor = 'grab';
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      editor.style.userSelect = 'text';
+      node.style.cursor = 'grab';
+      node.removeEventListener('pointermove', onPointerMove);
+      node.removeEventListener('pointerup', onPointerUp);
+      node.removeEventListener('pointercancel', onPointerUp);
+
+      if (
+        pointerId !== null &&
+        typeof node.releasePointerCapture === 'function' &&
+        node.hasPointerCapture(pointerId)
+      ) {
+        node.releasePointerCapture(pointerId);
+      }
     };
 
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-  });
+    if (pointerId !== null && typeof node.setPointerCapture === 'function') {
+      node.setPointerCapture(pointerId);
+    }
 
-  node.append(editor, dragHandle);
+    node.addEventListener('pointermove', onPointerMove);
+    node.addEventListener('pointerup', onPointerUp);
+    node.addEventListener('pointercancel', onPointerUp);
+  };
+
+  node.addEventListener('pointerdown', beginDrag);
+
+  node.append(editor);
   return record;
 }

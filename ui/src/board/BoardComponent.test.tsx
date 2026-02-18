@@ -17,9 +17,9 @@ describe('BoardComponent', () => {
     expect(screen.getByText('Test note')).toBeInTheDocument();
   });
 
-  it('renders a dedicated note drag handle', () => {
+  it('does not render a dedicated note drag handle', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
-    expect(screen.getByTestId('note-drag-handle-test-note')).toBeInTheDocument();
+    expect(screen.queryByTestId('note-drag-handle-test-note')).not.toBeInTheDocument();
   });
 
   it('renders eight resize handles for each note element', () => {

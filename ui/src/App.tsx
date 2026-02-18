@@ -20,6 +20,24 @@ const DEFAULT_BOARD: BoardModel = {
       width: 320,
       height: 220,
       text: 'Welcome to wideboard.\nDrag this note, resize it, and edit the text.'
+    },
+    {
+      id: 'welcome-tips-1',
+      kind: 'note',
+      x: 100,
+      y: 340,
+      width: 320,
+      height: 180,
+      text: 'Tip: Click a note to activate it.\nOnly the active note shows resize handles.'
+    },
+    {
+      id: 'welcome-tips-2',
+      kind: 'note',
+      x: 100,
+      y: 550,
+      width: 320,
+      height: 180,
+      text: 'Tip: Use + Note in the toolbar, then click the board to place a new note.'
     }
   ]
 };

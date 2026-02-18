@@ -53,8 +53,10 @@ class BoardRenderer {
     this.host.style.width = '100%';
     this.host.style.height = '100%';
     this.host.style.overflow = 'hidden';
-    this.host.style.background =
-      'radial-gradient(circle at 16% 0%, #ecfbff 0%, #d6f4ff 42%, #bdddf5 100%)';
+    this.host.style.backgroundColor = '#d6f4ff';
+    this.host.style.backgroundImage =
+      'linear-gradient(rgba(20, 84, 133, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 84, 133, 0.12) 1px, transparent 1px), radial-gradient(circle at 16% 0%, #ecfbff 0%, #d6f4ff 42%, #bdddf5 100%)';
+    this.host.style.backgroundSize = '38px 38px, 38px 38px, 100% 100%';
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
 

@@ -17,6 +17,11 @@ describe('BoardComponent', () => {
     expect(screen.getByText('Test note')).toBeInTheDocument();
   });
 
+  it('renders a dedicated note drag handle', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    expect(screen.getByTestId('note-drag-handle-test-note')).toBeInTheDocument();
+  });
+
   it('renders eight resize handles for each note element', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     const noteNode = document.querySelector('[data-element-id="test-note"]');

@@ -14,6 +14,7 @@ export interface NoteRecord {
   model: NoteElement;
   node: HTMLDivElement;
   editor: HTMLDivElement;
+  dragHandle: HTMLDivElement;
 }
 
 /* 📖 # Why isolate note DOM behavior in a separate module?
@@ -52,25 +53,34 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   editor.style.fontSize = '15px';
   editor.dataset.testid = `note-editor-${element.id}`;
 
+  const dragHandle = document.createElement('div');
+  dragHandle.dataset.dragHandle = element.id;
+  dragHandle.dataset.testid = `note-drag-handle-${element.id}`;
+  dragHandle.style.position = 'absolute';
+  dragHandle.style.left = '18px';
+  dragHandle.style.top = '8px';
+  dragHandle.style.width = '52px';
+  dragHandle.style.height = '10px';
+  dragHandle.style.borderRadius = '999px';
+  dragHandle.style.background = 'rgba(47, 38, 24, 0.24)';
+  dragHandle.style.cursor = 'grab';
+  dragHandle.style.zIndex = '3';
+
   const model = { ...element };
-  const record: NoteRecord = { model, node, editor };
+  const record: NoteRecord = { model, node, editor, dragHandle };
   applyFrameLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
     model.text = editor.textContent ?? '';
   });
 
-  node.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const targetNode = event.target as Node;
-    if (targetNode === editor || editor.contains(targetNode)) {
+  dragHandle.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 && event.button !== -1) {
       return;
     }
 
     event.preventDefault();
+    dragHandle.style.cursor = 'grabbing';
     const origin = { x: event.clientX, y: event.clientY };
     const startingState = { ...record.model };
 
@@ -87,6 +97,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
     };
 
     const onPointerUp = () => {
+      dragHandle.style.cursor = 'grab';
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
@@ -95,6 +106,6 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
     window.addEventListener('pointerup', onPointerUp);
   });
 
-  node.append(editor);
+  node.append(editor, dragHandle);
   return record;
 }

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { BoardComponent, moveElement, resizeElement, type NoteElement } from './BoardComponent';
 
 describe('BoardComponent', () => {
@@ -20,6 +20,17 @@ describe('BoardComponent', () => {
   it('sets the board id on the host container', () => {
     render(<BoardComponent boardId="custom-board" initialElements={[baseNote]} />);
     expect(screen.getByTestId('board-component')).toHaveAttribute('data-board-id', 'custom-board');
+  });
+
+  it('renders a vertical toolbar for board actions', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    expect(screen.getByRole('toolbar', { name: 'Board tools' })).toBeInTheDocument();
+  });
+
+  it('creates a text note from the toolbar action', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    fireEvent.click(screen.getByTestId('create-note-action'));
+    expect(screen.getByText('New note')).toBeInTheDocument();
   });
 
   it.each([

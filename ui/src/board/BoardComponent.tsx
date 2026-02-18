@@ -74,6 +74,8 @@ class BoardRenderer {
 
   private readonly records = new Map<string, NoteRecord>();
 
+  private noteSequence = 1;
+
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
     this.host.style.position = 'relative';
@@ -82,6 +84,8 @@ class BoardRenderer {
     this.host.style.overflow = 'hidden';
     this.host.style.background =
       'radial-gradient(circle at 20% 0%, #f8f3e8 0%, #efe7d5 40%, #e0d2b7 100%)';
+
+    this.noteSequence = this.deriveInitialNoteSequence(initialElements);
 
     initialElements.forEach((element) => {
       if (element.kind === 'note') {
@@ -95,7 +99,48 @@ class BoardRenderer {
     this.host.replaceChildren();
   }
 
-  private createNote(element: NoteElement) {
+  public createTextNote() {
+    const existingCount = this.records.size;
+    const offset = (existingCount % 6) * 26;
+    const created = this.createNote({
+      id: this.generateNoteId(),
+      kind: 'note',
+      x: 96 + offset,
+      y: 92 + offset,
+      width: 260,
+      height: 170,
+      text: 'New note'
+    });
+
+    created.editor.focus();
+  }
+
+  private deriveInitialNoteSequence(elements: BoardElement[]) {
+    const maxExistingId = elements
+      .map((element) => {
+        if (element.kind !== 'note') {
+          return 0;
+        }
+
+        const match = /^note-(\d+)$/u.exec(element.id);
+        return match ? Number.parseInt(match[1], 10) : 0;
+      })
+      .reduce((maxId, currentId) => Math.max(maxId, currentId), 0);
+
+    return maxExistingId + 1;
+  }
+
+  private generateNoteId() {
+    while (this.records.has(`note-${this.noteSequence}`)) {
+      this.noteSequence += 1;
+    }
+
+    const id = `note-${this.noteSequence}`;
+    this.noteSequence += 1;
+    return id;
+  }
+
+  private createNote(element: NoteElement): NoteRecord {
     const node = document.createElement('div');
     node.dataset.elementId = element.id;
     node.style.position = 'absolute';
@@ -213,6 +258,7 @@ class BoardRenderer {
     node.append(editor, resizeHandle);
     this.host.append(node);
     this.records.set(model.id, record);
+    return record;
   }
 
   private applyLayout(record: NoteRecord) {
@@ -225,6 +271,7 @@ class BoardRenderer {
 
 export function BoardComponent({ boardId = 'welcome', initialElements }: BoardComponentProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<BoardRenderer | null>(null);
   const elementSnapshotRef = useRef<BoardElement[]>(
     initialElements?.map((item) => ({ ...item })) ?? [{ ...DEFAULT_ELEMENT }]
   );
@@ -236,8 +283,62 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
     }
 
     const renderer = new BoardRenderer(host, elementSnapshotRef.current);
-    return () => renderer.destroy();
+    rendererRef.current = renderer;
+
+    return () => {
+      rendererRef.current = null;
+      renderer.destroy();
+    };
   }, []);
 
-  return <div ref={hostRef} data-testid="board-component" data-board-id={boardId} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', minHeight: '100vh' }}>
+      {/* 📖 # Why keep toolbar UI in React while notes render imperatively?
+      The toolbar changes infrequently and benefits from declarative React handlers,
+      while note movement and resizing stay in the imperative renderer for direct DOM updates.
+      */}
+      <div
+        role="toolbar"
+        aria-label="Board tools"
+        data-testid="board-toolbar"
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: '1rem',
+          transform: 'translateY(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.55rem',
+          padding: '0.65rem',
+          borderRadius: '12px',
+          background: 'rgba(37, 31, 19, 0.8)',
+          boxShadow: '0 14px 30px rgba(26, 20, 12, 0.24)',
+          zIndex: '20'
+        }}
+      >
+        <button
+          type="button"
+          data-testid="create-note-action"
+          onClick={() => rendererRef.current?.createTextNote()}
+          style={{
+            border: 'none',
+            borderRadius: '8px',
+            padding: '0.5rem 0.72rem',
+            background: '#f6e7c8',
+            color: '#2f2618',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+        >
+          + Note
+        </button>
+      </div>
+      <div
+        ref={hostRef}
+        data-testid="board-component"
+        data-board-id={boardId}
+        style={{ width: '100%', height: '100%' }}
+      />
+    </div>
+  );
 }

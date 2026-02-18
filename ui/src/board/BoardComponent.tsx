@@ -1,25 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  ALL_RESIZE_HANDLES,
-  applyFrameLayout,
-  createResizeHandle,
-  moveFrame,
-  resizeFrame,
-  type FrameRect,
-  type MinimumSize,
-  type PointerDelta,
-  type ResizeHandlePosition
-} from './elementFrame';
-
-export interface NoteElement {
-  id: string;
-  kind: 'note';
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  text: string;
-}
+import type { MinimumSize, PointerDelta } from './elementFrame';
+import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
+export type { NoteElement } from './noteElement';
 
 export type BoardElement = NoteElement;
 
@@ -42,13 +24,6 @@ const DEFAULT_ELEMENT: NoteElement = {
   height: 180,
   text: 'Double-click or type to edit this note.'
 };
-
-interface NoteRecord {
-  model: NoteElement;
-  node: HTMLDivElement;
-  editor: HTMLDivElement;
-  resizeHandles: ReadonlyArray<{ position: ResizeHandlePosition; node: HTMLDivElement }>;
-}
 
 class BoardRenderer {
   private readonly host: HTMLDivElement;
@@ -131,135 +106,10 @@ class BoardRenderer {
   }
 
   private createNote(element: NoteElement): NoteRecord {
-    const node = document.createElement('div');
-    node.dataset.elementId = element.id;
-    node.style.position = 'absolute';
-    node.style.boxSizing = 'border-box';
-    node.style.border = '1px solid rgba(53, 42, 27, 0.35)';
-    node.style.borderRadius = '10px';
-    node.style.background = 'rgba(255, 255, 255, 0.93)';
-    node.style.boxShadow = '0 10px 24px rgba(53, 42, 27, 0.16)';
-    node.style.touchAction = 'none';
-    node.style.userSelect = 'none';
-
-    const editor = document.createElement('div');
-    editor.contentEditable = 'true';
-    editor.spellcheck = false;
-    editor.textContent = element.text;
-    editor.style.width = '100%';
-    editor.style.height = '100%';
-    editor.style.boxSizing = 'border-box';
-    editor.style.padding = '12px 14px 20px 14px';
-    editor.style.outline = 'none';
-    editor.style.borderRadius = '10px';
-    editor.style.overflow = 'auto';
-    editor.style.cursor = 'text';
-    editor.style.userSelect = 'text';
-    editor.style.whiteSpace = 'pre-wrap';
-    editor.style.fontFamily = '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif';
-    editor.style.color = '#2f2618';
-    editor.style.lineHeight = '1.45';
-    editor.style.fontSize = '15px';
-    editor.dataset.testid = `note-editor-${element.id}`;
-
-    const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
-      position,
-      node: createResizeHandle(position)
-    }));
-
-    const model = { ...element };
-    const record: NoteRecord = { model, node, editor, resizeHandles };
-    this.applyLayout(record);
-
-    editor.addEventListener('input', () => {
-      model.text = editor.textContent ?? '';
-    });
-
-    node.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-
-      const targetNode = event.target as Node;
-      if (
-        resizeHandles.some(
-          ({ node: handleNode }) => targetNode === handleNode || handleNode.contains(targetNode)
-        )
-      ) {
-        return;
-      }
-
-      if (targetNode === editor || editor.contains(targetNode)) {
-        return;
-      }
-
-      event.preventDefault();
-      const origin = { x: event.clientX, y: event.clientY };
-      const startingState = { ...record.model };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        const delta = {
-          x: moveEvent.clientX - origin.x,
-          y: moveEvent.clientY - origin.y
-        };
-        record.model = {
-          ...record.model,
-          ...moveFrame(startingState, delta)
-        };
-        this.applyLayout(record);
-      };
-
-      const onPointerUp = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', onPointerUp);
-      };
-
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', onPointerUp);
-    });
-
-    resizeHandles.forEach(({ position, node: handleNode }) => {
-      handleNode.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) {
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-
-        const origin = { x: event.clientX, y: event.clientY };
-        const startingState = { ...record.model };
-
-        const onPointerMove = (moveEvent: PointerEvent) => {
-          const delta = {
-            x: moveEvent.clientX - origin.x,
-            y: moveEvent.clientY - origin.y
-          };
-          record.model = {
-            ...record.model,
-            ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
-          };
-          this.applyLayout(record);
-        };
-
-        const onPointerUp = () => {
-          window.removeEventListener('pointermove', onPointerMove);
-          window.removeEventListener('pointerup', onPointerUp);
-        };
-
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
-      });
-    });
-
-    node.append(editor, ...resizeHandles.map(({ node: handleNode }) => handleNode));
-    this.host.append(node);
-    this.records.set(model.id, record);
+    const record = createNoteRecord(element, { minimumSize: MIN_NOTE_SIZE });
+    this.host.append(record.node);
+    this.records.set(record.model.id, record);
     return record;
-  }
-
-  private applyLayout(record: NoteRecord) {
-    applyFrameLayout(record.node, record.model as FrameRect);
   }
 }
 

@@ -49,6 +49,8 @@ class BoardRenderer {
 
   private lastCopiedNote: NoteElement | null = null;
 
+  private panOffset: PointerDelta = { x: 0, y: 0 };
+
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
     this.host.style.position = 'relative';
@@ -68,11 +70,13 @@ class BoardRenderer {
       }
     });
 
+    this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.addEventListener('copy', this.handleCopy);
     this.host.addEventListener('paste', this.handlePaste);
   }
 
   public destroy() {
+    this.host.removeEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.removeEventListener('copy', this.handleCopy);
     this.host.removeEventListener('paste', this.handlePaste);
     this.records.clear();
@@ -132,6 +136,29 @@ class BoardRenderer {
     const id = `note-${this.noteSequence}`;
     this.noteSequence += 1;
     return id;
+  }
+
+  private applyNoteLayout(note: NoteRecord) {
+    this.applyFrameWithPan(note.node, note.model);
+  }
+
+  private applyFrameWithPan(node: HTMLElement, frame: NoteElement) {
+    applyFrameLayout(node, {
+      ...frame,
+      x: frame.x + this.panOffset.x,
+      y: frame.y + this.panOffset.y
+    });
+  }
+
+  private updatePanBackground() {
+    const offset = `${this.panOffset.x}px ${this.panOffset.y}px`;
+    this.host.style.backgroundPosition = `${offset}, ${offset}, ${offset}`;
+  }
+
+  private refreshAllLayouts() {
+    this.records.forEach((record) => {
+      this.applyNoteLayout(record.note);
+    });
   }
 
   private isEventInsideHost(event: Event) {
@@ -256,6 +283,47 @@ class BoardRenderer {
     event.preventDefault();
   };
 
+  private handlePanStart = (event: PointerEvent) => {
+    if (event.button !== 1 && event.button !== 2) {
+      return;
+    }
+
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const origin = { x: event.clientX, y: event.clientY };
+    const startOffset = { ...this.panOffset };
+    this.host.style.cursor = 'grabbing';
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      this.panOffset = {
+        x: startOffset.x + (moveEvent.clientX - origin.x),
+        y: startOffset.y + (moveEvent.clientY - origin.y)
+      };
+      this.updatePanBackground();
+      this.refreshAllLayouts();
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      this.host.style.cursor = 'default';
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  public toBoardPosition(position: PointerDelta): PointerDelta {
+    return {
+      x: position.x - this.panOffset.x,
+      y: position.y - this.panOffset.y
+    };
+  }
+
   /* 📖 # Why render resize handles only for the active note?
   Showing handles for every note creates visual noise and makes intent unclear.
   Keeping handles mounted only on the active note matches direct-manipulation UX patterns.
@@ -276,7 +344,9 @@ class BoardRenderer {
   }
 
   private createNote(element: NoteElement): BoardRecord {
-    const note = createNoteRecord(element);
+    const note = createNoteRecord(element, {
+      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame)
+    });
     const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
       position,
       node: createResizeHandle(position)
@@ -303,7 +373,7 @@ class BoardRenderer {
             ...note.model,
             ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
           };
-          applyFrameLayout(note.node, note.model);
+          this.applyFrameWithPan(note.node, note.model);
           note.scheduleAutoFit();
         };
 
@@ -324,6 +394,7 @@ class BoardRenderer {
 
     const record: BoardRecord = { note, resizeHandles };
     this.host.append(note.node);
+    this.applyFrameWithPan(note.node, note.model);
     note.scheduleAutoFit();
     this.records.set(note.model.id, record);
     if (this.activeNoteId === null) {
@@ -424,10 +495,11 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
           }
 
           const bounds = event.currentTarget.getBoundingClientRect();
-          renderer.createTextNoteAt({
+          const boardPosition = renderer.toBoardPosition({
             x: event.clientX - bounds.left,
             y: event.clientY - bounds.top
           });
+          renderer.createTextNoteAt(boardPosition);
           setIsAddingNote(false);
         }}
         style={{ width: '100%', height: '100vh', cursor: isAddingNote ? noteCursor : 'default' }}

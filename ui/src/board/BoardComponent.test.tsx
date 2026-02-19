@@ -194,4 +194,44 @@ describe('BoardComponent', () => {
     const noteNodes = document.querySelectorAll('[data-element-id]');
     expect(noteNodes.length).toBe(2);
   });
+
+  it('pans the canvas with middle mouse drag', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+
+      const board = screen.getByTestId('board-component');
+      const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+      const originalLeft = noteNode.style.left;
+
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 1,
+          buttons: 4,
+          clientX: 10,
+          clientY: 10,
+          bubbles: true
+        })
+      );
+
+      const moveCall = addSpy.mock.calls.find(([type]) => type === 'pointermove');
+      const handler = moveCall?.[1];
+      expect(typeof handler).toBe('function');
+      if (typeof handler !== 'function') {
+        throw new Error('Expected pointer move handler to be registered.');
+      }
+
+      (handler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 60,
+          clientY: 40
+        })
+      );
+
+      expect(noteNode.style.left).not.toBe(originalLeft);
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
 });

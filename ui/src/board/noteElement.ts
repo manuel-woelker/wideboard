@@ -90,7 +90,11 @@ function createAutoFitScheduler(autoFit: () => number | null) {
 Board orchestration should stay focused on element lifecycle and tool actions.
 Note rendering only needs a frame and content; board-level concerns such as resize handles stay outside.
 */
-export function createNoteRecord(element: NoteElement): NoteRecord {
+export function createNoteRecord(
+  element: NoteElement,
+  options: { applyLayout?: (node: HTMLElement, frame: NoteElement) => void } = {}
+): NoteRecord {
+  const applyLayout = options.applyLayout ?? applyFrameLayout;
   const node = document.createElement('div');
   node.dataset.elementId = element.id;
   node.style.position = 'absolute';
@@ -128,7 +132,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
 
   const model = { ...element };
   const record: NoteRecord = { model, node, editor, autoFitText, scheduleAutoFit };
-  applyFrameLayout(record.node, record.model);
+  applyLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
     model.text = editor.textContent ?? '';
@@ -167,7 +171,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
         ...record.model,
         ...moveFrame(startingState, delta)
       };
-      applyFrameLayout(record.node, record.model);
+      applyLayout(record.node, record.model);
     };
 
     const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : null;

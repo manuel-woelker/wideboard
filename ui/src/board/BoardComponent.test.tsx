@@ -503,6 +503,126 @@ describe('BoardComponent', () => {
     expect(noteNodes.length).toBe(2);
   });
 
+  it('creates an image element when pasting image files', () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:test-image-url');
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+      const board = screen.getByTestId('board-component');
+      const file = new File(['fake-bytes'], 'clipboard-elephant.png', { type: 'image/png' });
+
+      const clipboardData = {
+        files: [file],
+        getData: () => ''
+      };
+
+      const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      Object.defineProperty(pasteEvent, 'clipboardData', {
+        value: clipboardData
+      });
+
+      board.dispatchEvent(pasteEvent);
+
+      expect(screen.getByAltText('clipboard-elephant.png')).toBeInTheDocument();
+      expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
+
+  it('creates an image element when pasting image clipboard items', () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:test-item-url');
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+      const board = screen.getByTestId('board-component');
+      const file = new File(['fake-bytes'], 'clipboard-item-elephant.png', { type: 'image/png' });
+
+      const clipboardData = {
+        files: [],
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => file
+          }
+        ],
+        getData: () => ''
+      };
+
+      const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      Object.defineProperty(pasteEvent, 'clipboardData', {
+        value: clipboardData
+      });
+
+      board.dispatchEvent(pasteEvent);
+
+      expect(screen.getByAltText('clipboard-item-elephant.png')).toBeInTheDocument();
+      expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
+
+  it('creates an image element when dropping image files on the board', () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:test-drop-url');
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+      const board = screen.getByTestId('board-component');
+      const file = new File(['fake-bytes'], 'drop-elephant.jpg', { type: 'image/jpeg' });
+
+      Object.defineProperty(board, 'getBoundingClientRect', {
+        value: () =>
+          ({
+            left: 0,
+            top: 0
+          }) as DOMRect,
+        configurable: true
+      });
+
+      const dropEvent = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent;
+      Object.defineProperty(dropEvent, 'dataTransfer', {
+        value: {
+          files: [file]
+        }
+      });
+      Object.defineProperty(dropEvent, 'clientX', {
+        value: 220
+      });
+      Object.defineProperty(dropEvent, 'clientY', {
+        value: 180
+      });
+
+      board.dispatchEvent(dropEvent);
+
+      expect(screen.getByAltText('drop-elephant.jpg')).toBeInTheDocument();
+      expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
+
+  it('enables file drop during dragover when transfer types include Files', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const board = screen.getByTestId('board-component');
+
+    const dragOverEvent = new Event('dragover', { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(dragOverEvent, 'dataTransfer', {
+      value: {
+        files: [],
+        types: ['Files'],
+        dropEffect: 'none'
+      }
+    });
+
+    const prevented = !board.dispatchEvent(dragOverEvent);
+    expect(prevented).toBe(true);
+  });
+
   it('pans the canvas with middle mouse drag', () => {
     const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
 

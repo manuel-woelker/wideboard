@@ -25,6 +25,11 @@ const MIN_NOTE_SIZE: MinimumSize = {
   width: 120,
   height: 80
 };
+const DEFAULT_IMAGE_SIZE: MinimumSize = {
+  width: 320,
+  height: 240
+};
+const IMAGE_INSERT_OFFSET = 24;
 
 const GRID_SIZE = 38;
 const MIN_ZOOM = 0.4;
@@ -61,6 +66,7 @@ class BoardRenderer {
   private activeNoteId: string | null = null;
 
   private noteSequence = 1;
+  private imageSequence = 1;
 
   private lastCopiedNote: NoteElement | null = null;
 
@@ -111,6 +117,7 @@ class BoardRenderer {
     this.host.append(this.selectionFrameNode);
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
+    this.imageSequence = this.deriveInitialImageSequence(initialElements);
 
     initialElements.forEach((element) => {
       if (element.kind === 'note') {
@@ -125,6 +132,8 @@ class BoardRenderer {
     this.host.addEventListener('contextmenu', this.handleContextMenu);
     this.host.addEventListener('copy', this.handleCopy);
     this.host.addEventListener('paste', this.handlePaste);
+    this.host.addEventListener('dragover', this.handleDragOver);
+    this.host.addEventListener('drop', this.handleDrop);
   }
 
   public destroy() {
@@ -133,6 +142,8 @@ class BoardRenderer {
     this.host.removeEventListener('contextmenu', this.handleContextMenu);
     this.host.removeEventListener('copy', this.handleCopy);
     this.host.removeEventListener('paste', this.handlePaste);
+    this.host.removeEventListener('dragover', this.handleDragOver);
+    this.host.removeEventListener('drop', this.handleDrop);
     this.records.clear();
     this.selectionFrameNode.remove();
     this.host.replaceChildren();
@@ -256,6 +267,21 @@ class BoardRenderer {
     return maxExistingId + 1;
   }
 
+  private deriveInitialImageSequence(elements: BoardElement[]) {
+    const maxExistingId = elements
+      .map((element) => {
+        if (element.kind !== 'image') {
+          return 0;
+        }
+
+        const match = /^image-(\d+)$/u.exec(element.id);
+        return match ? Number.parseInt(match[1], 10) : 0;
+      })
+      .reduce((maxId, currentId) => Math.max(maxId, currentId), 0);
+
+    return maxExistingId + 1;
+  }
+
   private generateNoteId() {
     while (this.records.has(`note-${this.noteSequence}`)) {
       this.noteSequence += 1;
@@ -263,6 +289,16 @@ class BoardRenderer {
 
     const id = `note-${this.noteSequence}`;
     this.noteSequence += 1;
+    return id;
+  }
+
+  private generateImageId() {
+    while (this.records.has(`image-${this.imageSequence}`)) {
+      this.imageSequence += 1;
+    }
+
+    const id = `image-${this.imageSequence}`;
+    this.imageSequence += 1;
     return id;
   }
 
@@ -304,6 +340,19 @@ class BoardRenderer {
   private isEventInsideHost(event: Event) {
     const target = event.target;
     return target instanceof Node && this.host.contains(target);
+  }
+
+  private shouldHandleBoardPaste(event: ClipboardEvent) {
+    if (this.isEventInsideHost(event)) {
+      return true;
+    }
+
+    const activeElement = document.activeElement;
+    if (!activeElement || activeElement === document.body) {
+      return true;
+    }
+
+    return this.host.contains(activeElement);
   }
 
   private getActiveNoteRecord(): NoteRecord | null {
@@ -544,6 +593,78 @@ class BoardRenderer {
     return note.editor.contains(anchor);
   }
 
+  private getViewportBoardCenterPosition() {
+    return {
+      x: this.host.clientWidth / 2 / this.zoom - this.panOffset.x,
+      y: this.host.clientHeight / 2 / this.zoom - this.panOffset.y
+    };
+  }
+
+  private getImageFiles(transfer: Pick<DataTransfer, 'files' | 'items'> | null | undefined) {
+    if (!transfer) {
+      return [];
+    }
+
+    const files = Array.from(transfer.files ?? []).filter((file) => file.type.startsWith('image/'));
+    if (files.length > 0) {
+      return files;
+    }
+
+    return Array.from(transfer.items ?? [])
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+  }
+
+  private containsFileDropType(dataTransfer: DataTransfer | null | undefined) {
+    if (!dataTransfer) {
+      return false;
+    }
+
+    if (dataTransfer.files && dataTransfer.files.length > 0) {
+      return true;
+    }
+
+    return Array.from(dataTransfer.types ?? []).includes('Files');
+  }
+
+  private addImageFilesAtPosition(files: File[], boardPosition: PointerDelta) {
+    if (files.length === 0 || typeof URL.createObjectURL !== 'function') {
+      return;
+    }
+
+    const createdIds: string[] = [];
+    files.forEach((file, index) => {
+      const src = URL.createObjectURL(file);
+      const boundedPosition = this.boundPosition(
+        {
+          x: boardPosition.x + IMAGE_INSERT_OFFSET * index,
+          y: boardPosition.y + IMAGE_INSERT_OFFSET * index
+        },
+        DEFAULT_IMAGE_SIZE
+      );
+
+      const element: ImageElement = {
+        id: this.generateImageId(),
+        kind: 'image',
+        x: boundedPosition.x,
+        y: boundedPosition.y,
+        width: DEFAULT_IMAGE_SIZE.width,
+        height: DEFAULT_IMAGE_SIZE.height,
+        src,
+        alt: file.name || 'Pasted image'
+      };
+
+      this.createImage(element);
+      createdIds.push(element.id);
+    });
+
+    const lastCreatedId = createdIds.at(-1);
+    if (lastCreatedId) {
+      this.selectSingleNote(lastCreatedId);
+    }
+  }
+
   private handleCopy = (event: ClipboardEvent) => {
     if (!this.isEventInsideHost(event)) {
       return;
@@ -576,11 +697,18 @@ class BoardRenderer {
   };
 
   private handlePaste = (event: ClipboardEvent) => {
-    if (!this.isEventInsideHost(event)) {
+    if (!this.shouldHandleBoardPaste(event)) {
       return;
     }
 
     const clipboard = event.clipboardData;
+    const imageFiles = this.getImageFiles(clipboard);
+    if (imageFiles.length > 0) {
+      this.addImageFilesAtPosition(imageFiles, this.getViewportBoardCenterPosition());
+      event.preventDefault();
+      return;
+    }
+
     const rawPayload = clipboard?.getData('application/x-wideboard-note');
     if (!rawPayload && !this.lastCopiedNote) {
       return;
@@ -637,6 +765,42 @@ class BoardRenderer {
     this.selectSingleNote(createdElement.id);
     created.note?.editor.focus();
     event.preventDefault();
+  };
+
+  private handleDragOver = (event: DragEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    if (!this.containsFileDropType(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  private handleDrop = (event: DragEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    const imageFiles = this.getImageFiles(event.dataTransfer);
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const bounds = this.host.getBoundingClientRect();
+    const boardPosition = this.toBoardPosition({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    });
+
+    this.addImageFilesAtPosition(imageFiles, boardPosition);
   };
 
   private handlePanStart = (event: PointerEvent) => {

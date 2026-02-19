@@ -40,13 +40,14 @@ const DEFAULT_ELEMENT: NoteElement = {
 
 interface BoardRecord {
   note: NoteRecord;
-  resizeHandles: ReadonlyArray<{ position: ResizeHandlePosition; node: HTMLDivElement }>;
 }
 
 class BoardRenderer {
   private readonly host: HTMLDivElement;
 
   private readonly records = new Map<string, BoardRecord>();
+
+  private readonly selectedNoteIds = new Set<string>();
 
   private activeNoteId: string | null = null;
 
@@ -58,6 +59,15 @@ class BoardRenderer {
 
   private zoom = 1;
 
+  private marqueeNode: HTMLDivElement | null = null;
+
+  private readonly selectionFrameNode: HTMLDivElement;
+
+  private readonly selectionResizeHandles: ReadonlyArray<{
+    position: ResizeHandlePosition;
+    node: HTMLDivElement;
+  }>;
+
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
     this.host.style.position = 'relative';
@@ -68,6 +78,28 @@ class BoardRenderer {
     this.host.style.backgroundImage =
       'linear-gradient(rgba(20, 84, 133, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 84, 133, 0.12) 1px, transparent 1px), radial-gradient(circle at 16% 0%, #ecfbff 0%, #d6f4ff 42%, #bdddf5 100%)';
     this.host.style.backgroundSize = `${GRID_SIZE}px ${GRID_SIZE}px, ${GRID_SIZE}px ${GRID_SIZE}px, 100% 100%`;
+    this.selectionFrameNode = document.createElement('div');
+    this.selectionFrameNode.dataset.testid = 'board-selection-frame';
+    this.selectionFrameNode.style.position = 'absolute';
+    this.selectionFrameNode.style.pointerEvents = 'none';
+    this.selectionFrameNode.style.border = '2px solid rgba(20, 84, 133, 0.65)';
+    this.selectionFrameNode.style.zIndex = '12';
+    this.selectionFrameNode.style.display = 'none';
+
+    this.selectionResizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
+      position,
+      node: createResizeHandle(position)
+    }));
+
+    this.selectionResizeHandles.forEach(({ position, node }) => {
+      node.addEventListener('pointerdown', (event) => {
+        this.beginSelectionResize(event, position);
+      });
+      node.style.pointerEvents = 'auto';
+      this.selectionFrameNode.append(node);
+    });
+
+    this.host.append(this.selectionFrameNode);
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
 
@@ -91,6 +123,7 @@ class BoardRenderer {
     this.host.removeEventListener('copy', this.handleCopy);
     this.host.removeEventListener('paste', this.handlePaste);
     this.records.clear();
+    this.selectionFrameNode.remove();
     this.host.replaceChildren();
   }
 
@@ -106,12 +139,86 @@ class BoardRenderer {
       text: 'New note'
     });
 
-    this.setActiveNote(created.note.model.id);
+    this.selectSingleNote(created.note.model.id);
     created.note.editor.focus();
   }
 
   public clearActiveNote() {
-    this.setActiveNote(null);
+    this.setSelection([]);
+  }
+
+  public beginMarqueeSelection(event: PointerEvent) {
+    if (event.button !== 0 || event.target !== this.host) {
+      return false;
+    }
+
+    event.preventDefault();
+
+    const hostBounds = this.host.getBoundingClientRect();
+    const origin = {
+      x: event.clientX - hostBounds.left,
+      y: event.clientY - hostBounds.top
+    };
+
+    const marquee = document.createElement('div');
+    marquee.dataset.testid = 'board-marquee-selection';
+    marquee.style.position = 'absolute';
+    marquee.style.pointerEvents = 'none';
+    marquee.style.zIndex = '15';
+    marquee.style.border = '1px dashed rgba(20, 84, 133, 0.75)';
+    marquee.style.background = 'rgba(121, 219, 255, 0.18)';
+
+    this.host.append(marquee);
+    this.marqueeNode = marquee;
+
+    this.updateMarquee(origin, origin);
+    let didMove = false;
+    const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : null;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const current = {
+        x: moveEvent.clientX - hostBounds.left,
+        y: moveEvent.clientY - hostBounds.top
+      };
+      this.updateMarquee(origin, current);
+
+      didMove = didMove || Math.hypot(current.x - origin.x, current.y - origin.y) >= 3;
+      if (!didMove) {
+        return;
+      }
+
+      this.setSelection(this.getIntersectingNoteIds(origin, current));
+    };
+
+    const onPointerUp = () => {
+      if (!didMove) {
+        this.clearActiveNote();
+      }
+
+      this.marqueeNode?.remove();
+      this.marqueeNode = null;
+
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+
+      if (
+        pointerId !== null &&
+        typeof this.host.releasePointerCapture === 'function' &&
+        this.host.hasPointerCapture(pointerId)
+      ) {
+        this.host.releasePointerCapture(pointerId);
+      }
+    };
+
+    if (pointerId !== null && typeof this.host.setPointerCapture === 'function') {
+      this.host.setPointerCapture(pointerId);
+    }
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    return true;
   }
 
   private boundPosition(position: PointerDelta, size: MinimumSize): PointerDelta {
@@ -175,6 +282,7 @@ class BoardRenderer {
     this.records.forEach((record) => {
       this.applyFrameWithPan(record.note.node, record.note.model);
     });
+    this.refreshSelectionFrame();
   }
 
   private scheduleAutoFitAll() {
@@ -195,6 +303,218 @@ class BoardRenderer {
 
     const record = this.records.get(this.activeNoteId);
     return record?.note ?? null;
+  }
+
+  private getSelectedRecords() {
+    return Array.from(this.selectedNoteIds)
+      .map((noteId) => this.records.get(noteId))
+      .filter((record): record is BoardRecord => Boolean(record));
+  }
+
+  private getSelectedBounds() {
+    const selected = this.getSelectedRecords();
+    if (selected.length === 0) {
+      return null;
+    }
+
+    const left = Math.min(...selected.map((record) => record.note.model.x));
+    const top = Math.min(...selected.map((record) => record.note.model.y));
+    const right = Math.max(
+      ...selected.map((record) => record.note.model.x + record.note.model.width)
+    );
+    const bottom = Math.max(
+      ...selected.map((record) => record.note.model.y + record.note.model.height)
+    );
+
+    return {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top
+    };
+  }
+
+  private refreshSelectionFrame() {
+    const bounds = this.getSelectedBounds();
+    if (!bounds) {
+      this.selectionFrameNode.style.display = 'none';
+      return;
+    }
+
+    this.selectionFrameNode.style.display = 'block';
+    applyFrameLayout(this.selectionFrameNode, {
+      x: (bounds.x + this.panOffset.x) * this.zoom,
+      y: (bounds.y + this.panOffset.y) * this.zoom,
+      width: bounds.width * this.zoom,
+      height: bounds.height * this.zoom
+    });
+  }
+
+  private beginSelectionDrag(event: PointerEvent, noteId: string) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    if (!this.selectedNoteIds.has(noteId)) {
+      this.selectSingleNote(noteId);
+    } else {
+      this.setSelection(Array.from(this.selectedNoteIds), noteId);
+    }
+
+    const selected = this.getSelectedRecords();
+    if (selected.length === 0) {
+      return;
+    }
+
+    const origin = { x: event.clientX, y: event.clientY };
+    const startingFrames = new Map(
+      selected.map((record) => [
+        record.note.model.id,
+        {
+          x: record.note.model.x,
+          y: record.note.model.y,
+          width: record.note.model.width,
+          height: record.note.model.height
+        }
+      ])
+    );
+    let hasStartedDrag = false;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const rawDelta: PointerDelta = {
+        x: moveEvent.clientX - origin.x,
+        y: moveEvent.clientY - origin.y
+      };
+
+      if (!hasStartedDrag && Math.hypot(rawDelta.x, rawDelta.y) < 3) {
+        return;
+      }
+
+      if (!hasStartedDrag) {
+        hasStartedDrag = true;
+        window.getSelection()?.removeAllRanges();
+      }
+
+      moveEvent.preventDefault();
+
+      const delta = {
+        x: rawDelta.x / this.zoom,
+        y: rawDelta.y / this.zoom
+      };
+
+      selected.forEach((record) => {
+        const frame = startingFrames.get(record.note.model.id);
+        if (!frame) {
+          return;
+        }
+
+        record.note.model = {
+          ...record.note.model,
+          x: frame.x + delta.x,
+          y: frame.y + delta.y
+        };
+        this.applyFrameWithPan(record.note.node, record.note.model);
+      });
+
+      this.refreshSelectionFrame();
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+  }
+
+  private beginSelectionResize(event: PointerEvent, handle: ResizeHandlePosition) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const selected = this.getSelectedRecords();
+    const startBounds = this.getSelectedBounds();
+    if (selected.length === 0 || !startBounds) {
+      return;
+    }
+
+    const startingFrames = new Map(
+      selected.map((record) => [
+        record.note.model.id,
+        {
+          x: record.note.model.x,
+          y: record.note.model.y,
+          width: record.note.model.width,
+          height: record.note.model.height
+        }
+      ])
+    );
+
+    const minimumWidth = Math.max(
+      1,
+      ...selected.map(
+        (record) => (startBounds.width * MIN_NOTE_SIZE.width) / Math.max(record.note.model.width, 1)
+      )
+    );
+    const minimumHeight = Math.max(
+      1,
+      ...selected.map(
+        (record) =>
+          (startBounds.height * MIN_NOTE_SIZE.height) / Math.max(record.note.model.height, 1)
+      )
+    );
+
+    const origin = { x: event.clientX, y: event.clientY };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = {
+        x: (moveEvent.clientX - origin.x) / this.zoom,
+        y: (moveEvent.clientY - origin.y) / this.zoom
+      };
+      const nextBounds = resizeFrame(startBounds, delta, handle, {
+        width: minimumWidth,
+        height: minimumHeight
+      });
+      const scaleX = nextBounds.width / startBounds.width;
+      const scaleY = nextBounds.height / startBounds.height;
+
+      selected.forEach((record) => {
+        const frame = startingFrames.get(record.note.model.id);
+        if (!frame) {
+          return;
+        }
+
+        record.note.model = {
+          ...record.note.model,
+          x: nextBounds.x + (frame.x - startBounds.x) * scaleX,
+          y: nextBounds.y + (frame.y - startBounds.y) * scaleY,
+          width: frame.width * scaleX,
+          height: frame.height * scaleY
+        };
+
+        this.applyFrameWithPan(record.note.node, record.note.model);
+        record.note.scheduleAutoFit();
+      });
+
+      this.refreshSelectionFrame();
+    };
+
+    const onPointerUp = () => {
+      selected.forEach((record) => record.note.scheduleAutoFit());
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
   }
 
   private shouldAllowDefaultTextCopy(note: NoteRecord) {
@@ -300,7 +620,7 @@ class BoardRenderer {
       text: source.text
     });
 
-    this.setActiveNote(created.note.model.id);
+    this.selectSingleNote(created.note.model.id);
     created.note.editor.focus();
     event.preventDefault();
   };
@@ -390,85 +710,95 @@ class BoardRenderer {
     };
   }
 
-  /* 📖 # Why render resize handles only for the active note?
-  Showing handles for every note creates visual noise and makes intent unclear.
-  Keeping handles mounted only on the active note matches direct-manipulation UX patterns.
+  private getIntersectingNoteIds(origin: PointerDelta, current: PointerDelta) {
+    const left = Math.min(origin.x, current.x);
+    const right = Math.max(origin.x, current.x);
+    const top = Math.min(origin.y, current.y);
+    const bottom = Math.max(origin.y, current.y);
+
+    return Array.from(this.records.values())
+      .filter((record) => {
+        const noteLeft = (record.note.model.x + this.panOffset.x) * this.zoom;
+        const noteTop = (record.note.model.y + this.panOffset.y) * this.zoom;
+        const noteRight = noteLeft + record.note.model.width * this.zoom;
+        const noteBottom = noteTop + record.note.model.height * this.zoom;
+
+        return noteLeft <= right && noteRight >= left && noteTop <= bottom && noteBottom >= top;
+      })
+      .map((record) => record.note.model.id);
+  }
+
+  private updateMarquee(origin: PointerDelta, current: PointerDelta) {
+    const marquee = this.marqueeNode;
+    if (!marquee) {
+      return;
+    }
+
+    const left = Math.min(origin.x, current.x);
+    const top = Math.min(origin.y, current.y);
+    const width = Math.abs(current.x - origin.x);
+    const height = Math.abs(current.y - origin.y);
+
+    marquee.style.left = `${left}px`;
+    marquee.style.top = `${top}px`;
+    marquee.style.width = `${width}px`;
+    marquee.style.height = `${height}px`;
+  }
+
+  private selectSingleNote(noteId: string) {
+    this.setSelection([noteId], noteId);
+  }
+
+  /* 📖 # Why render handles on the combined selection frame?
+  Multi-selection should feel like manipulating one grouped shape.
+  Drawing handles on the selection bounds keeps resize/drag affordances in a single, predictable place.
   */
-  private setActiveNote(noteId: string | null) {
-    this.activeNoteId = noteId;
-    this.records.forEach((record, recordId) => {
-      const isActive = noteId === recordId;
-      record.resizeHandles.forEach(({ node }) => {
-        const isAttached = node.parentElement === record.note.node;
-        if (isActive && !isAttached) {
-          record.note.node.append(node);
-        } else if (!isActive && isAttached) {
-          node.remove();
-        }
-      });
+  private setSelection(noteIds: Iterable<string>, preferredActiveNoteId: string | null = null) {
+    const noteIdList = Array.from(noteIds);
+    this.selectedNoteIds.clear();
+    noteIdList.forEach((noteId) => {
+      if (this.records.has(noteId)) {
+        this.selectedNoteIds.add(noteId);
+      }
     });
+
+    if (preferredActiveNoteId && this.selectedNoteIds.has(preferredActiveNoteId)) {
+      this.activeNoteId = preferredActiveNoteId;
+    } else if (this.activeNoteId && this.selectedNoteIds.has(this.activeNoteId)) {
+      this.activeNoteId = this.activeNoteId;
+    } else {
+      this.activeNoteId = this.selectedNoteIds.values().next().value ?? null;
+    }
+
+    this.records.forEach((record, recordId) => {
+      const isSelected = this.selectedNoteIds.has(recordId);
+
+      record.note.node.dataset.selected = isSelected ? 'true' : 'false';
+      record.note.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
+      record.note.node.style.outlineOffset = isSelected ? '0px' : '';
+    });
+
+    this.refreshSelectionFrame();
   }
 
   private createNote(element: NoteElement): BoardRecord {
     const note = createNoteRecord(element, {
       applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
-      toModelDelta: (delta) => ({
-        x: delta.x / this.zoom,
-        y: delta.y / this.zoom
-      })
+      enableDrag: false
     });
-    const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
-      position,
-      node: createResizeHandle(position)
-    }));
-
-    resizeHandles.forEach(({ position, node: handleNode }) => {
-      handleNode.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) {
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-
-        const origin = { x: event.clientX, y: event.clientY };
-        const startingState = { ...note.model };
-
-        const onPointerMove = (moveEvent: PointerEvent) => {
-          const delta = {
-            x: (moveEvent.clientX - origin.x) / this.zoom,
-            y: (moveEvent.clientY - origin.y) / this.zoom
-          };
-          note.model = {
-            ...note.model,
-            ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
-          };
-          this.applyFrameWithPan(note.node, note.model);
-          note.scheduleAutoFit();
-        };
-
-        const onPointerUp = () => {
-          window.removeEventListener('pointermove', onPointerMove);
-          window.removeEventListener('pointerup', onPointerUp);
-          note.scheduleAutoFit();
-        };
-
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
-      });
+    note.node.addEventListener('pointerdown', (event) => {
+      this.beginSelectionDrag(event, note.model.id);
     });
 
-    note.node.addEventListener('pointerdown', () => {
-      this.setActiveNote(note.model.id);
-    });
-
-    const record: BoardRecord = { note, resizeHandles };
+    const record: BoardRecord = { note };
     this.host.append(note.node);
     this.applyFrameWithPan(note.node, note.model);
     note.scheduleAutoFit();
     this.records.set(note.model.id, record);
-    if (this.activeNoteId === null) {
-      this.setActiveNote(note.model.id);
+    if (this.selectedNoteIds.size === 0) {
+      this.selectSingleNote(note.model.id);
+    } else {
+      this.setSelection(this.selectedNoteIds, this.activeNoteId);
     }
     return record;
   }
@@ -555,7 +885,7 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
 
           if (!isAddingNote) {
             if (event.target === event.currentTarget) {
-              renderer.clearActiveNote();
+              renderer.beginMarqueeSelection(event.nativeEvent);
             }
             return;
           }

@@ -31,20 +31,312 @@ describe('BoardComponent', () => {
     expect(screen.queryByTestId('note-drag-handle-test-note')).not.toBeInTheDocument();
   });
 
-  it('shows resize handles only on the active note', () => {
+  it('shows resize handles on the shared selection frame', () => {
     render(<BoardComponent initialElements={[baseNote, secondNote]} />);
     const firstNoteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
     const secondNoteNode = document.querySelector(
       '[data-element-id="test-note-2"]'
     ) as HTMLDivElement;
+    const selectionFrame = screen.getByTestId('board-selection-frame');
 
-    expect(firstNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(8);
-    expect(secondNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(0);
+    expect(selectionFrame.querySelectorAll('[data-resize-handle]').length).toBe(8);
+    expect(firstNoteNode.dataset.selected).toBe('true');
+    expect(secondNoteNode.dataset.selected).toBe('false');
+  });
 
-    fireEvent.pointerDown(secondNoteNode, { button: 0, clientX: 300, clientY: 200 });
+  it('selects multiple notes by left-dragging a marquee on the canvas', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
 
-    expect(firstNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(0);
-    expect(secondNoteNode.querySelectorAll('[data-resize-handle]').length).toBe(8);
+    try {
+      render(<BoardComponent initialElements={[baseNote, secondNote]} />);
+      const board = screen.getByTestId('board-component');
+      const firstNoteNode = document.querySelector(
+        '[data-element-id="test-note"]'
+      ) as HTMLDivElement;
+      const secondNoteNode = document.querySelector(
+        '[data-element-id="test-note-2"]'
+      ) as HTMLDivElement;
+
+      Object.defineProperty(board, 'getBoundingClientRect', {
+        value: () =>
+          ({
+            left: 0,
+            top: 0
+          }) as DOMRect,
+        configurable: true
+      });
+
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 0,
+          clientY: 0,
+          bubbles: true
+        })
+      );
+
+      const moveCall = addSpy.mock.calls.find(([type]) => type === 'pointermove');
+      const moveHandler = moveCall?.[1];
+      expect(typeof moveHandler).toBe('function');
+      if (typeof moveHandler !== 'function') {
+        throw new Error('Expected marquee pointer move handler to be registered.');
+      }
+
+      (moveHandler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      const upCall = addSpy.mock.calls.find(([type]) => type === 'pointerup');
+      const upHandler = upCall?.[1];
+      expect(typeof upHandler).toBe('function');
+      if (typeof upHandler !== 'function') {
+        throw new Error('Expected marquee pointer up handler to be registered.');
+      }
+
+      (upHandler as (event: Event) => void)(
+        new MouseEvent('pointerup', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      expect(firstNoteNode.dataset.selected).toBe('true');
+      expect(secondNoteNode.dataset.selected).toBe('true');
+      expect(screen.getByTestId('board-selection-frame')).toBeInTheDocument();
+      expect(
+        screen.getByTestId('board-selection-frame').querySelectorAll('[data-resize-handle]').length
+      ).toBe(8);
+      expect(screen.queryByTestId('board-marquee-selection')).not.toBeInTheDocument();
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+
+  it('drags all selected notes together', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+
+    try {
+      render(<BoardComponent initialElements={[baseNote, secondNote]} />);
+      const board = screen.getByTestId('board-component');
+      const firstNoteNode = document.querySelector(
+        '[data-element-id="test-note"]'
+      ) as HTMLDivElement;
+      const secondNoteNode = document.querySelector(
+        '[data-element-id="test-note-2"]'
+      ) as HTMLDivElement;
+
+      Object.defineProperty(board, 'getBoundingClientRect', {
+        value: () =>
+          ({
+            left: 0,
+            top: 0
+          }) as DOMRect,
+        configurable: true
+      });
+
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 0,
+          clientY: 0,
+          bubbles: true
+        })
+      );
+
+      const marqueeMoveHandler = addSpy.mock.calls.find(([type]) => type === 'pointermove')?.[1];
+      if (typeof marqueeMoveHandler !== 'function') {
+        throw new Error('Expected marquee pointer move handler to be registered.');
+      }
+      (marqueeMoveHandler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      const marqueeUpHandler = addSpy.mock.calls.find(([type]) => type === 'pointerup')?.[1];
+      if (typeof marqueeUpHandler !== 'function') {
+        throw new Error('Expected marquee pointer up handler to be registered.');
+      }
+      (marqueeUpHandler as (event: Event) => void)(
+        new MouseEvent('pointerup', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      firstNoteNode.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 30,
+          clientY: 30,
+          bubbles: true
+        })
+      );
+
+      const dragMoveHandler = addSpy.mock.calls
+        .filter(([type]) => type === 'pointermove')
+        .at(-1)?.[1];
+      if (typeof dragMoveHandler !== 'function') {
+        throw new Error('Expected drag pointer move handler to be registered.');
+      }
+      (dragMoveHandler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 80,
+          clientY: 70
+        })
+      );
+
+      expect(firstNoteNode.style.left).toBe('60px');
+      expect(secondNoteNode.style.left).toBe('310px');
+      expect(firstNoteNode.style.top).toBe('60px');
+      expect(secondNoteNode.style.top).toBe('220px');
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+
+  it('resizes all selected notes using selection frame handles', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+
+    try {
+      render(<BoardComponent initialElements={[baseNote, secondNote]} />);
+      const board = screen.getByTestId('board-component');
+      const firstNoteNode = document.querySelector(
+        '[data-element-id="test-note"]'
+      ) as HTMLDivElement;
+      const secondNoteNode = document.querySelector(
+        '[data-element-id="test-note-2"]'
+      ) as HTMLDivElement;
+      const selectionFrame = screen.getByTestId('board-selection-frame');
+
+      Object.defineProperty(board, 'getBoundingClientRect', {
+        value: () =>
+          ({
+            left: 0,
+            top: 0
+          }) as DOMRect,
+        configurable: true
+      });
+
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 0,
+          clientY: 0,
+          bubbles: true
+        })
+      );
+
+      const marqueeMoveHandler = addSpy.mock.calls.find(([type]) => type === 'pointermove')?.[1];
+      if (typeof marqueeMoveHandler !== 'function') {
+        throw new Error('Expected marquee pointer move handler to be registered.');
+      }
+      (marqueeMoveHandler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      const marqueeUpHandler = addSpy.mock.calls.find(([type]) => type === 'pointerup')?.[1];
+      if (typeof marqueeUpHandler !== 'function') {
+        throw new Error('Expected marquee pointer up handler to be registered.');
+      }
+      (marqueeUpHandler as (event: Event) => void)(
+        new MouseEvent('pointerup', {
+          clientX: 500,
+          clientY: 400
+        })
+      );
+
+      const handle = selectionFrame.querySelector('[data-resize-handle="right"]') as HTMLDivElement;
+
+      handle.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 460,
+          clientY: 200,
+          bubbles: true
+        })
+      );
+
+      const resizeMoveHandler = addSpy.mock.calls
+        .filter(([type]) => type === 'pointermove')
+        .at(-1)?.[1];
+      if (typeof resizeMoveHandler !== 'function') {
+        throw new Error('Expected resize pointer move handler to be registered.');
+      }
+      (resizeMoveHandler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 560,
+          clientY: 200
+        })
+      );
+
+      expect(Number.parseFloat(firstNoteNode.style.width)).toBeGreaterThan(200);
+      expect(Number.parseFloat(secondNoteNode.style.width)).toBeGreaterThan(200);
+      expect(Number.parseFloat(secondNoteNode.style.left)).toBeGreaterThan(260);
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+
+  it('clears selection when clicking empty canvas', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+
+    try {
+      render(<BoardComponent initialElements={[baseNote, secondNote]} />);
+      const board = screen.getByTestId('board-component');
+      const firstNoteNode = document.querySelector(
+        '[data-element-id="test-note"]'
+      ) as HTMLDivElement;
+      const selectionFrame = screen.getByTestId('board-selection-frame');
+
+      fireEvent.pointerDown(firstNoteNode, { button: 0, clientX: 50, clientY: 50 });
+      expect(selectionFrame.style.display).toBe('block');
+
+      Object.defineProperty(board, 'getBoundingClientRect', {
+        value: () =>
+          ({
+            left: 0,
+            top: 0
+          }) as DOMRect,
+        configurable: true
+      });
+
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          clientX: 900,
+          clientY: 700,
+          bubbles: true
+        })
+      );
+
+      const upCall = addSpy.mock.calls.find(([type]) => type === 'pointerup');
+      const upHandler = upCall?.[1];
+      expect(typeof upHandler).toBe('function');
+      if (typeof upHandler !== 'function') {
+        throw new Error('Expected marquee pointer up handler to be registered.');
+      }
+
+      (upHandler as (event: Event) => void)(
+        new MouseEvent('pointerup', {
+          clientX: 900,
+          clientY: 700
+        })
+      );
+
+      expect(firstNoteNode.dataset.selected).toBe('false');
+      expect(selectionFrame.style.display).toBe('none');
+      expect(screen.queryByTestId('board-marquee-selection')).not.toBeInTheDocument();
+    } finally {
+      addSpy.mockRestore();
+    }
   });
 
   it('sets the board id on the host container', () => {
@@ -98,7 +390,8 @@ describe('BoardComponent', () => {
       const editor = document.querySelector(
         '[data-testid="note-editor-test-note"]'
       ) as HTMLDivElement;
-      const handle = noteNode.querySelector(
+      const selectionFrame = screen.getByTestId('board-selection-frame');
+      const handle = selectionFrame.querySelector(
         '[data-resize-handle="bottom-right"]'
       ) as HTMLDivElement;
 

@@ -95,10 +95,12 @@ export function createNoteRecord(
   options: {
     applyLayout?: (node: HTMLElement, frame: NoteElement) => void;
     toModelDelta?: (delta: PointerDelta) => PointerDelta;
+    enableDrag?: boolean;
   } = {}
 ): NoteRecord {
   const applyLayout = options.applyLayout ?? applyFrameLayout;
   const toModelDelta = options.toModelDelta ?? ((delta) => delta);
+  const enableDrag = options.enableDrag ?? true;
   const node = document.createElement('div');
   node.dataset.elementId = element.id;
   node.style.position = 'absolute';
@@ -206,7 +208,9 @@ export function createNoteRecord(
     node.addEventListener('pointercancel', onPointerUp);
   };
 
-  node.addEventListener('pointerdown', beginDrag);
+  if (enableDrag) {
+    node.addEventListener('pointerdown', beginDrag);
+  }
 
   node.append(editor);
   return record;

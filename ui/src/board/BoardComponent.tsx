@@ -23,6 +23,11 @@ const MIN_NOTE_SIZE: MinimumSize = {
   height: 80
 };
 
+const GRID_SIZE = 38;
+const MIN_ZOOM = 0.4;
+const MAX_ZOOM = 2.5;
+const ZOOM_SENSITIVITY = 0.0015;
+
 const DEFAULT_ELEMENT: NoteElement = {
   id: 'note-1',
   kind: 'note',
@@ -51,6 +56,8 @@ class BoardRenderer {
 
   private panOffset: PointerDelta = { x: 0, y: 0 };
 
+  private zoom = 1;
+
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
     this.host.style.position = 'relative';
@@ -60,7 +67,7 @@ class BoardRenderer {
     this.host.style.backgroundColor = '#d6f4ff';
     this.host.style.backgroundImage =
       'linear-gradient(rgba(20, 84, 133, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(20, 84, 133, 0.12) 1px, transparent 1px), radial-gradient(circle at 16% 0%, #ecfbff 0%, #d6f4ff 42%, #bdddf5 100%)';
-    this.host.style.backgroundSize = '38px 38px, 38px 38px, 100% 100%';
+    this.host.style.backgroundSize = `${GRID_SIZE}px ${GRID_SIZE}px, ${GRID_SIZE}px ${GRID_SIZE}px, 100% 100%`;
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
 
@@ -71,12 +78,14 @@ class BoardRenderer {
     });
 
     this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
+    this.host.addEventListener('wheel', this.handleZoom, { passive: false });
     this.host.addEventListener('copy', this.handleCopy);
     this.host.addEventListener('paste', this.handlePaste);
   }
 
   public destroy() {
     this.host.removeEventListener('pointerdown', this.handlePanStart, { capture: true });
+    this.host.removeEventListener('wheel', this.handleZoom);
     this.host.removeEventListener('copy', this.handleCopy);
     this.host.removeEventListener('paste', this.handlePaste);
     this.records.clear();
@@ -138,26 +147,37 @@ class BoardRenderer {
     return id;
   }
 
-  private applyNoteLayout(note: NoteRecord) {
-    this.applyFrameWithPan(note.node, note.model);
-  }
-
+  /* 📖 # Why keep pan + zoom in board space?
+  Dragging and resizing should update the model in its own coordinate system,
+  so we only scale during rendering and divide pointer deltas by zoom.
+  */
   private applyFrameWithPan(node: HTMLElement, frame: NoteElement) {
     applyFrameLayout(node, {
       ...frame,
-      x: frame.x + this.panOffset.x,
-      y: frame.y + this.panOffset.y
+      x: (frame.x + this.panOffset.x) * this.zoom,
+      y: (frame.y + this.panOffset.y) * this.zoom,
+      width: frame.width * this.zoom,
+      height: frame.height * this.zoom
     });
   }
 
   private updatePanBackground() {
-    const offset = `${this.panOffset.x}px ${this.panOffset.y}px`;
+    const offset = `${this.panOffset.x * this.zoom}px ${this.panOffset.y * this.zoom}px`;
     this.host.style.backgroundPosition = `${offset}, ${offset}, ${offset}`;
+    this.host.style.backgroundSize = `${GRID_SIZE * this.zoom}px ${GRID_SIZE * this.zoom}px, ${
+      GRID_SIZE * this.zoom
+    }px ${GRID_SIZE * this.zoom}px, 100% 100%`;
   }
 
   private refreshAllLayouts() {
     this.records.forEach((record) => {
-      this.applyNoteLayout(record.note);
+      this.applyFrameWithPan(record.note.node, record.note.model);
+    });
+  }
+
+  private scheduleAutoFitAll() {
+    this.records.forEach((record) => {
+      record.note.scheduleAutoFit();
     });
   }
 
@@ -300,8 +320,8 @@ class BoardRenderer {
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       this.panOffset = {
-        x: startOffset.x + (moveEvent.clientX - origin.x),
-        y: startOffset.y + (moveEvent.clientY - origin.y)
+        x: startOffset.x + (moveEvent.clientX - origin.x) / this.zoom,
+        y: startOffset.y + (moveEvent.clientY - origin.y) / this.zoom
       };
       this.updatePanBackground();
       this.refreshAllLayouts();
@@ -317,10 +337,44 @@ class BoardRenderer {
     window.addEventListener('pointerup', onPointerUp);
   };
 
+  private handleZoom = (event: WheelEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const bounds = this.host.getBoundingClientRect();
+    const pointer = {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    };
+
+    const zoomFactor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * zoomFactor));
+
+    if (nextZoom === this.zoom) {
+      return;
+    }
+
+    const worldX = pointer.x / this.zoom - this.panOffset.x;
+    const worldY = pointer.y / this.zoom - this.panOffset.y;
+
+    this.zoom = nextZoom;
+    this.panOffset = {
+      x: pointer.x / this.zoom - worldX,
+      y: pointer.y / this.zoom - worldY
+    };
+
+    this.updatePanBackground();
+    this.refreshAllLayouts();
+    this.scheduleAutoFitAll();
+  };
+
   public toBoardPosition(position: PointerDelta): PointerDelta {
     return {
-      x: position.x - this.panOffset.x,
-      y: position.y - this.panOffset.y
+      x: position.x / this.zoom - this.panOffset.x,
+      y: position.y / this.zoom - this.panOffset.y
     };
   }
 
@@ -345,7 +399,11 @@ class BoardRenderer {
 
   private createNote(element: NoteElement): BoardRecord {
     const note = createNoteRecord(element, {
-      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame)
+      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
+      toModelDelta: (delta) => ({
+        x: delta.x / this.zoom,
+        y: delta.y / this.zoom
+      })
     });
     const resizeHandles = ALL_RESIZE_HANDLES.map((position) => ({
       position,
@@ -366,8 +424,8 @@ class BoardRenderer {
 
         const onPointerMove = (moveEvent: PointerEvent) => {
           const delta = {
-            x: moveEvent.clientX - origin.x,
-            y: moveEvent.clientY - origin.y
+            x: (moveEvent.clientX - origin.x) / this.zoom,
+            y: (moveEvent.clientY - origin.y) / this.zoom
           };
           note.model = {
             ...note.model,

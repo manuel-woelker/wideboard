@@ -234,4 +234,26 @@ describe('BoardComponent', () => {
       addSpy.mockRestore();
     }
   });
+
+  it('zooms the canvas with the mouse wheel', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const board = screen.getByTestId('board-component');
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const initialLeft = noteNode.style.left;
+    const initialWidth = noteNode.style.width;
+
+    board.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: -100,
+        clientX: 0,
+        clientY: 0,
+        bubbles: true,
+        cancelable: true
+      })
+    );
+
+    expect(noteNode.style.left).not.toBe(initialLeft);
+    expect(noteNode.style.width).not.toBe(initialWidth);
+  });
 });

@@ -92,9 +92,13 @@ Note rendering only needs a frame and content; board-level concerns such as resi
 */
 export function createNoteRecord(
   element: NoteElement,
-  options: { applyLayout?: (node: HTMLElement, frame: NoteElement) => void } = {}
+  options: {
+    applyLayout?: (node: HTMLElement, frame: NoteElement) => void;
+    toModelDelta?: (delta: PointerDelta) => PointerDelta;
+  } = {}
 ): NoteRecord {
   const applyLayout = options.applyLayout ?? applyFrameLayout;
+  const toModelDelta = options.toModelDelta ?? ((delta) => delta);
   const node = document.createElement('div');
   node.dataset.elementId = element.id;
   node.style.position = 'absolute';
@@ -151,12 +155,12 @@ export function createNoteRecord(
     node.style.cursor = 'grabbing';
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      const delta: PointerDelta = {
+      const rawDelta: PointerDelta = {
         x: moveEvent.clientX - origin.x,
         y: moveEvent.clientY - origin.y
       };
 
-      if (!hasStartedDrag && Math.hypot(delta.x, delta.y) < 3) {
+      if (!hasStartedDrag && Math.hypot(rawDelta.x, rawDelta.y) < 3) {
         return;
       }
 
@@ -167,6 +171,7 @@ export function createNoteRecord(
       }
 
       moveEvent.preventDefault();
+      const delta = toModelDelta(rawDelta);
       record.model = {
         ...record.model,
         ...moveFrame(startingState, delta)

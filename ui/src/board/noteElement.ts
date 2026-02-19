@@ -14,6 +14,76 @@ export interface NoteRecord {
   model: NoteElement;
   node: HTMLDivElement;
   editor: HTMLDivElement;
+  autoFitText: () => number | null;
+  scheduleAutoFit: () => void;
+}
+
+const AUTO_FIT_MIN_SIZE = 12;
+const AUTO_FIT_ITERATIONS = 8;
+
+function canMeasureEditor(editor: HTMLDivElement) {
+  return editor.isConnected && editor.clientWidth > 0 && editor.clientHeight > 0;
+}
+
+function editorTextFits(editor: HTMLDivElement) {
+  return editor.scrollHeight <= editor.clientHeight && editor.scrollWidth <= editor.clientWidth;
+}
+
+/* 📖 # Why scale max font size from the editor bounds?
+Notes can be resized far beyond the old fixed cap, so we let the largest fitting size
+grow with the available space while still clamping to a safe minimum.
+*/
+function getAutoFitMaxSize(editor: HTMLDivElement, minSize: number) {
+  return Math.max(minSize, Math.floor(Math.min(editor.clientWidth, editor.clientHeight)));
+}
+
+/* 📖 # Why use a bounded binary search for auto-fit sizing?
+We want the largest readable font size that still fits, and binary search keeps this fast
+even when auto-fitting on every edit or resize end.
+*/
+export function autoFitNoteEditor(
+  editor: HTMLDivElement,
+  options: { minSize?: number; maxSize?: number } = {}
+) {
+  if (!canMeasureEditor(editor)) {
+    return null;
+  }
+
+  const minSize = options.minSize ?? AUTO_FIT_MIN_SIZE;
+  const maxSize = options.maxSize ?? getAutoFitMaxSize(editor, minSize);
+  let low = minSize;
+  let high = maxSize;
+  let best = minSize;
+
+  for (let iteration = 0; iteration < AUTO_FIT_ITERATIONS && low <= high; iteration += 1) {
+    const mid = Math.floor((low + high) / 2);
+    editor.style.fontSize = `${mid}px`;
+
+    if (editorTextFits(editor)) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  editor.style.fontSize = `${best}px`;
+  return best;
+}
+
+function createAutoFitScheduler(autoFit: () => number | null) {
+  let pendingFrame: number | null = null;
+
+  return () => {
+    if (pendingFrame !== null) {
+      cancelAnimationFrame(pendingFrame);
+    }
+
+    pendingFrame = requestAnimationFrame(() => {
+      pendingFrame = null;
+      autoFit();
+    });
+  };
 }
 
 /* 📖 # Why isolate note DOM behavior in a separate module?
@@ -43,7 +113,7 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   editor.style.padding = '12px 14px 20px 14px';
   editor.style.outline = 'none';
   editor.style.borderRadius = '10px';
-  editor.style.overflow = 'auto';
+  editor.style.overflow = 'hidden';
   editor.style.cursor = 'text';
   editor.style.userSelect = 'text';
   editor.style.whiteSpace = 'pre-wrap';
@@ -53,12 +123,16 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
   editor.style.fontSize = '15px';
   editor.dataset.testid = `note-editor-${element.id}`;
 
+  const autoFitText = () => autoFitNoteEditor(editor);
+  const scheduleAutoFit = createAutoFitScheduler(autoFitText);
+
   const model = { ...element };
-  const record: NoteRecord = { model, node, editor };
+  const record: NoteRecord = { model, node, editor, autoFitText, scheduleAutoFit };
   applyFrameLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
     model.text = editor.textContent ?? '';
+    scheduleAutoFit();
   });
 
   const beginDrag = (event: PointerEvent) => {
@@ -127,4 +201,130 @@ export function createNoteRecord(element: NoteElement): NoteRecord {
 
   node.append(editor);
   return record;
+}
+
+if (import.meta.vitest) {
+  const { afterEach, describe, expect, it } = import.meta.vitest;
+
+  describe('autoFitNoteEditor', () => {
+    afterEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    it('shrinks text to the largest size that fits', () => {
+      const editor = document.createElement('div');
+      document.body.append(editor);
+
+      Object.defineProperty(editor, 'clientHeight', {
+        value: 100,
+        configurable: true
+      });
+      Object.defineProperty(editor, 'clientWidth', {
+        value: 100,
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollHeight', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0') * 6),
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollWidth', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0') * 5),
+        configurable: true
+      });
+
+      const fitted = autoFitNoteEditor(editor, { minSize: 10, maxSize: 30 });
+
+      expect(fitted).toBe(16);
+      expect(editor.style.fontSize).toBe('16px');
+    });
+
+    it('uses the editor bounds to pick a default max size', () => {
+      const editor = document.createElement('div');
+      document.body.append(editor);
+
+      Object.defineProperty(editor, 'clientHeight', {
+        value: 80,
+        configurable: true
+      });
+      Object.defineProperty(editor, 'clientWidth', {
+        value: 120,
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollHeight', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0')),
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollWidth', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0')),
+        configurable: true
+      });
+
+      const fitted = autoFitNoteEditor(editor);
+
+      expect(fitted).toBe(80);
+      expect(editor.style.fontSize).toBe('80px');
+    });
+
+    it('returns null when the editor has no measurable size', () => {
+      const editor = document.createElement('div');
+
+      const fitted = autoFitNoteEditor(editor);
+
+      expect(fitted).toBeNull();
+    });
+  });
+
+  describe('createNoteRecord', () => {
+    afterEach(() => {
+      document.body.innerHTML = '';
+    });
+
+    it('auto fits the editor after text input', () => {
+      const originalRAF = globalThis.requestAnimationFrame;
+      const originalCancelRAF = globalThis.cancelAnimationFrame;
+      globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      };
+      globalThis.cancelAnimationFrame = () => {};
+
+      try {
+        const record = createNoteRecord({
+          id: 'note-test',
+          kind: 'note',
+          x: 10,
+          y: 20,
+          width: 200,
+          height: 120,
+          text: 'Hello'
+        });
+        document.body.append(record.node);
+
+        Object.defineProperty(record.editor, 'clientWidth', {
+          value: 200,
+          configurable: true
+        });
+        Object.defineProperty(record.editor, 'clientHeight', {
+          value: 120,
+          configurable: true
+        });
+        Object.defineProperty(record.editor, 'scrollHeight', {
+          get: () => Math.ceil(Number.parseFloat(record.editor.style.fontSize || '0') * 2),
+          configurable: true
+        });
+        Object.defineProperty(record.editor, 'scrollWidth', {
+          get: () => Math.ceil(Number.parseFloat(record.editor.style.fontSize || '0') * 2),
+          configurable: true
+        });
+
+        record.editor.textContent = 'Updated';
+        record.editor.dispatchEvent(new Event('input'));
+
+        expect(record.editor.style.fontSize).toBe('60px');
+      } finally {
+        globalThis.requestAnimationFrame = originalRAF;
+        globalThis.cancelAnimationFrame = originalCancelRAF;
+      }
+    });
+  });
 }

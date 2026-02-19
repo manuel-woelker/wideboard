@@ -80,4 +80,79 @@ describe('BoardComponent', () => {
     expect(screen.getByText('New note')).toBeInTheDocument();
     expect(action).toHaveAttribute('aria-pressed', 'false');
   });
+
+  it('auto fits note text while resizing', () => {
+    const originalRAF = globalThis.requestAnimationFrame;
+    const originalCancelRAF = globalThis.cancelAnimationFrame;
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+    globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+
+      const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+      const editor = document.querySelector(
+        '[data-testid="note-editor-test-note"]'
+      ) as HTMLDivElement;
+      const handle = noteNode.querySelector(
+        '[data-resize-handle="bottom-right"]'
+      ) as HTMLDivElement;
+
+      Object.defineProperty(editor, 'clientWidth', {
+        get: () => Number.parseFloat(noteNode.style.width || '0'),
+        configurable: true
+      });
+      Object.defineProperty(editor, 'clientHeight', {
+        get: () => Number.parseFloat(noteNode.style.height || '0'),
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollHeight', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0') * 2),
+        configurable: true
+      });
+      Object.defineProperty(editor, 'scrollWidth', {
+        get: () => Math.ceil(Number.parseFloat(editor.style.fontSize || '0') * 2),
+        configurable: true
+      });
+
+      const initialFontSize = editor.style.fontSize;
+
+      handle.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 0,
+          buttons: 1,
+          clientX: 200,
+          clientY: 120,
+          bubbles: true
+        })
+      );
+      const moveCall = addSpy.mock.calls.find(([type]) => type === 'pointermove');
+      const handler = moveCall?.[1];
+      expect(typeof handler).toBe('function');
+      if (typeof handler !== 'function') {
+        throw new Error('Expected pointer move handler to be registered.');
+      }
+      (handler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 200,
+          clientY: 200,
+          buttons: 1
+        })
+      );
+
+      expect(noteNode.style.height).toBe('200px');
+      expect(editor.style.fontSize).not.toBe(initialFontSize);
+      expect(editor.style.fontSize).toBe('100px');
+
+      fireEvent.pointerUp(window);
+    } finally {
+      globalThis.requestAnimationFrame = originalRAF;
+      globalThis.cancelAnimationFrame = originalCancelRAF;
+      addSpy.mockRestore();
+    }
+  });
 });

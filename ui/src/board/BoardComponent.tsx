@@ -175,11 +175,13 @@ class BoardRenderer {
             ...resizeFrame(startingState, delta, position, MIN_NOTE_SIZE)
           };
           applyFrameLayout(note.node, note.model);
+          note.scheduleAutoFit();
         };
 
         const onPointerUp = () => {
           window.removeEventListener('pointermove', onPointerMove);
           window.removeEventListener('pointerup', onPointerUp);
+          note.scheduleAutoFit();
         };
 
         window.addEventListener('pointermove', onPointerMove);
@@ -193,6 +195,7 @@ class BoardRenderer {
 
     const record: BoardRecord = { note, resizeHandles };
     this.host.append(note.node);
+    note.scheduleAutoFit();
     this.records.set(note.model.id, record);
     if (this.activeNoteId === null) {
       this.setActiveNote(note.model.id);

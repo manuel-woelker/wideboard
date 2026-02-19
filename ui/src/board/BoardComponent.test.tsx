@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { BoardComponent, type NoteElement } from './BoardComponent';
+import { BoardComponent, type ImageElement, type NoteElement } from './BoardComponent';
 
 describe('BoardComponent', () => {
   const baseNote: NoteElement = {
@@ -20,10 +20,25 @@ describe('BoardComponent', () => {
     height: 120,
     text: 'Second note'
   };
+  const baseImage: ImageElement = {
+    id: 'test-image',
+    kind: 'image',
+    x: 520,
+    y: 100,
+    width: 220,
+    height: 160,
+    src: '/assets/elephant.jpg',
+    alt: 'Test elephant image'
+  };
 
   it('renders note text with imperative board rendering', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     expect(screen.getByText('Test note')).toBeInTheDocument();
+  });
+
+  it('renders image elements', () => {
+    render(<BoardComponent initialElements={[baseNote, baseImage]} />);
+    expect(screen.getByAltText('Test elephant image')).toBeInTheDocument();
   });
 
   it('does not render a dedicated note drag handle', () => {

@@ -4,14 +4,17 @@ import {
   applyFrameLayout,
   createResizeHandle,
   resizeFrame,
+  type FrameRect,
   type MinimumSize,
   type PointerDelta,
   type ResizeHandlePosition
 } from './elementFrame';
+import { createImageRecord, type ImageElement, type ImageRecord } from './imageElement';
 import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
+export type { ImageElement } from './imageElement';
 export type { NoteElement } from './noteElement';
 
-export type BoardElement = NoteElement;
+export type BoardElement = NoteElement | ImageElement;
 
 export interface BoardComponentProps {
   boardId?: string;
@@ -39,7 +42,13 @@ const DEFAULT_ELEMENT: NoteElement = {
 };
 
 interface BoardRecord {
-  note: NoteRecord;
+  kind: 'note' | 'image';
+  node: HTMLDivElement;
+  note?: NoteRecord;
+  image?: ImageRecord;
+  getModel: () => BoardElement;
+  setModel: (model: BoardElement) => void;
+  scheduleAutoFit: () => void;
 }
 
 class BoardRenderer {
@@ -106,6 +115,8 @@ class BoardRenderer {
     initialElements.forEach((element) => {
       if (element.kind === 'note') {
         this.createNote(element);
+      } else if (element.kind === 'image') {
+        this.createImage(element);
       }
     });
 
@@ -128,19 +139,18 @@ class BoardRenderer {
   }
 
   public createTextNoteAt(position: PointerDelta) {
-    const boundedPosition = this.boundPosition(position, { width: 260, height: 170 });
-    const created = this.createNote({
+    const createdElement: NoteElement = {
       id: this.generateNoteId(),
       kind: 'note',
-      x: boundedPosition.x,
-      y: boundedPosition.y,
+      ...this.boundPosition(position, { width: 260, height: 170 }),
       width: 260,
       height: 170,
       text: 'New note'
-    });
+    };
+    const created = this.createNote(createdElement);
 
-    this.selectSingleNote(created.note.model.id);
-    created.note.editor.focus();
+    this.selectSingleNote(createdElement.id);
+    created.note?.editor.focus();
   }
 
   public clearActiveNote() {
@@ -260,7 +270,7 @@ class BoardRenderer {
   Dragging and resizing should update the model in its own coordinate system,
   so we only scale during rendering and divide pointer deltas by zoom.
   */
-  private applyFrameWithPan(node: HTMLElement, frame: NoteElement) {
+  private applyFrameWithPan(node: HTMLElement, frame: FrameRect) {
     applyFrameLayout(node, {
       ...frame,
       x: (frame.x + this.panOffset.x) * this.zoom,
@@ -280,14 +290,14 @@ class BoardRenderer {
 
   private refreshAllLayouts() {
     this.records.forEach((record) => {
-      this.applyFrameWithPan(record.note.node, record.note.model);
+      this.applyFrameWithPan(record.node, record.getModel());
     });
     this.refreshSelectionFrame();
   }
 
   private scheduleAutoFitAll() {
     this.records.forEach((record) => {
-      record.note.scheduleAutoFit();
+      record.scheduleAutoFit();
     });
   }
 
@@ -302,7 +312,11 @@ class BoardRenderer {
     }
 
     const record = this.records.get(this.activeNoteId);
-    return record?.note ?? null;
+    if (!record || record.kind !== 'note') {
+      return null;
+    }
+
+    return record.note ?? null;
   }
 
   private getSelectedRecords() {
@@ -317,14 +331,11 @@ class BoardRenderer {
       return null;
     }
 
-    const left = Math.min(...selected.map((record) => record.note.model.x));
-    const top = Math.min(...selected.map((record) => record.note.model.y));
-    const right = Math.max(
-      ...selected.map((record) => record.note.model.x + record.note.model.width)
-    );
-    const bottom = Math.max(
-      ...selected.map((record) => record.note.model.y + record.note.model.height)
-    );
+    const frames = selected.map((record) => record.getModel());
+    const left = Math.min(...frames.map((frame) => frame.x));
+    const top = Math.min(...frames.map((frame) => frame.y));
+    const right = Math.max(...frames.map((frame) => frame.x + frame.width));
+    const bottom = Math.max(...frames.map((frame) => frame.y + frame.height));
 
     return {
       x: left,
@@ -369,12 +380,12 @@ class BoardRenderer {
     const origin = { x: event.clientX, y: event.clientY };
     const startingFrames = new Map(
       selected.map((record) => [
-        record.note.model.id,
+        record.getModel().id,
         {
-          x: record.note.model.x,
-          y: record.note.model.y,
-          width: record.note.model.width,
-          height: record.note.model.height
+          x: record.getModel().x,
+          y: record.getModel().y,
+          width: record.getModel().width,
+          height: record.getModel().height
         }
       ])
     );
@@ -403,17 +414,18 @@ class BoardRenderer {
       };
 
       selected.forEach((record) => {
-        const frame = startingFrames.get(record.note.model.id);
+        const current = record.getModel();
+        const frame = startingFrames.get(current.id);
         if (!frame) {
           return;
         }
 
-        record.note.model = {
-          ...record.note.model,
+        record.setModel({
+          ...current,
           x: frame.x + delta.x,
           y: frame.y + delta.y
-        };
-        this.applyFrameWithPan(record.note.node, record.note.model);
+        });
+        this.applyFrameWithPan(record.node, record.getModel());
       });
 
       this.refreshSelectionFrame();
@@ -446,12 +458,12 @@ class BoardRenderer {
 
     const startingFrames = new Map(
       selected.map((record) => [
-        record.note.model.id,
+        record.getModel().id,
         {
-          x: record.note.model.x,
-          y: record.note.model.y,
-          width: record.note.model.width,
-          height: record.note.model.height
+          x: record.getModel().x,
+          y: record.getModel().y,
+          width: record.getModel().width,
+          height: record.getModel().height
         }
       ])
     );
@@ -459,14 +471,14 @@ class BoardRenderer {
     const minimumWidth = Math.max(
       1,
       ...selected.map(
-        (record) => (startBounds.width * MIN_NOTE_SIZE.width) / Math.max(record.note.model.width, 1)
+        (record) => (startBounds.width * MIN_NOTE_SIZE.width) / Math.max(record.getModel().width, 1)
       )
     );
     const minimumHeight = Math.max(
       1,
       ...selected.map(
         (record) =>
-          (startBounds.height * MIN_NOTE_SIZE.height) / Math.max(record.note.model.height, 1)
+          (startBounds.height * MIN_NOTE_SIZE.height) / Math.max(record.getModel().height, 1)
       )
     );
 
@@ -485,28 +497,29 @@ class BoardRenderer {
       const scaleY = nextBounds.height / startBounds.height;
 
       selected.forEach((record) => {
-        const frame = startingFrames.get(record.note.model.id);
+        const current = record.getModel();
+        const frame = startingFrames.get(current.id);
         if (!frame) {
           return;
         }
 
-        record.note.model = {
-          ...record.note.model,
+        record.setModel({
+          ...current,
           x: nextBounds.x + (frame.x - startBounds.x) * scaleX,
           y: nextBounds.y + (frame.y - startBounds.y) * scaleY,
           width: frame.width * scaleX,
           height: frame.height * scaleY
-        };
+        });
 
-        this.applyFrameWithPan(record.note.node, record.note.model);
-        record.note.scheduleAutoFit();
+        this.applyFrameWithPan(record.node, record.getModel());
+        record.scheduleAutoFit();
       });
 
       this.refreshSelectionFrame();
     };
 
     const onPointerUp = () => {
-      selected.forEach((record) => record.note.scheduleAutoFit());
+      selected.forEach((record) => record.scheduleAutoFit());
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
@@ -610,7 +623,7 @@ class BoardRenderer {
       { width: source.width, height: source.height }
     );
 
-    const created = this.createNote({
+    const createdElement: NoteElement = {
       id: source.id,
       kind: 'note',
       x: position.x,
@@ -618,10 +631,11 @@ class BoardRenderer {
       width: source.width,
       height: source.height,
       text: source.text
-    });
+    };
+    const created = this.createNote(createdElement);
 
-    this.selectSingleNote(created.note.model.id);
-    created.note.editor.focus();
+    this.selectSingleNote(createdElement.id);
+    created.note?.editor.focus();
     event.preventDefault();
   };
 
@@ -718,14 +732,15 @@ class BoardRenderer {
 
     return Array.from(this.records.values())
       .filter((record) => {
-        const noteLeft = (record.note.model.x + this.panOffset.x) * this.zoom;
-        const noteTop = (record.note.model.y + this.panOffset.y) * this.zoom;
-        const noteRight = noteLeft + record.note.model.width * this.zoom;
-        const noteBottom = noteTop + record.note.model.height * this.zoom;
+        const model = record.getModel();
+        const noteLeft = (model.x + this.panOffset.x) * this.zoom;
+        const noteTop = (model.y + this.panOffset.y) * this.zoom;
+        const noteRight = noteLeft + model.width * this.zoom;
+        const noteBottom = noteTop + model.height * this.zoom;
 
         return noteLeft <= right && noteRight >= left && noteTop <= bottom && noteBottom >= top;
       })
-      .map((record) => record.note.model.id);
+      .map((record) => record.getModel().id);
   }
 
   private updateMarquee(origin: PointerDelta, current: PointerDelta) {
@@ -773,9 +788,9 @@ class BoardRenderer {
     this.records.forEach((record, recordId) => {
       const isSelected = this.selectedNoteIds.has(recordId);
 
-      record.note.node.dataset.selected = isSelected ? 'true' : 'false';
-      record.note.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
-      record.note.node.style.outlineOffset = isSelected ? '0px' : '';
+      record.node.dataset.selected = isSelected ? 'true' : 'false';
+      record.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
+      record.node.style.outlineOffset = isSelected ? '0px' : '';
     });
 
     this.refreshSelectionFrame();
@@ -790,7 +805,16 @@ class BoardRenderer {
       this.beginSelectionDrag(event, note.model.id);
     });
 
-    const record: BoardRecord = { note };
+    const record: BoardRecord = {
+      kind: 'note',
+      node: note.node,
+      note,
+      getModel: () => note.model,
+      setModel: (model) => {
+        note.model = model as NoteElement;
+      },
+      scheduleAutoFit: () => note.scheduleAutoFit()
+    };
     this.host.append(note.node);
     this.applyFrameWithPan(note.node, note.model);
     note.scheduleAutoFit();
@@ -800,6 +824,38 @@ class BoardRenderer {
     } else {
       this.setSelection(this.selectedNoteIds, this.activeNoteId);
     }
+    return record;
+  }
+
+  private createImage(element: ImageElement): BoardRecord {
+    const image = createImageRecord(element, {
+      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame)
+    });
+
+    image.node.addEventListener('pointerdown', (event) => {
+      this.beginSelectionDrag(event, image.model.id);
+    });
+
+    const record: BoardRecord = {
+      kind: 'image',
+      node: image.node,
+      image,
+      getModel: () => image.model,
+      setModel: (model) => {
+        image.model = model as ImageElement;
+      },
+      scheduleAutoFit: () => {}
+    };
+
+    this.host.append(image.node);
+    this.applyFrameWithPan(image.node, image.model);
+    this.records.set(image.model.id, record);
+    if (this.selectedNoteIds.size === 0) {
+      this.selectSingleNote(image.model.id);
+    } else {
+      this.setSelection(this.selectedNoteIds, this.activeNoteId);
+    }
+
     return record;
   }
 }

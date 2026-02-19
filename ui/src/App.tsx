@@ -1,6 +1,7 @@
 import { Global, css } from '@emotion/react';
 import styled from '@emotion/styled';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
+import elephantImage from '../assets/elephant.jpg';
 
 interface BoardModel {
   id: string;
@@ -38,6 +39,16 @@ const DEFAULT_BOARD: BoardModel = {
       width: 320,
       height: 180,
       text: 'Tip: Use + Note in the toolbar, then click the board to place a new note.'
+    },
+    {
+      id: 'welcome-image-elephant',
+      kind: 'image',
+      x: 480,
+      y: 120,
+      width: 512,
+      height: 768,
+      src: elephantImage,
+      alt: 'Elephant in the welcome board'
     }
   ]
 };

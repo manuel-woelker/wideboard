@@ -26,4 +26,9 @@ describe('App', () => {
     render(<App />);
     expect(screen.getByTestId('board-component')).toHaveAttribute('data-board-id', 'welcome');
   });
+
+  it('renders the welcome elephant image', () => {
+    render(<App />);
+    expect(screen.getByAltText('Elephant in the welcome board')).toBeInTheDocument();
+  });
 });

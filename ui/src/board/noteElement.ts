@@ -16,6 +16,7 @@ export interface NoteRecord {
   editor: HTMLDivElement;
   autoFitText: () => number | null;
   scheduleAutoFit: () => void;
+  setEditingEnabled: (enabled: boolean) => void;
 }
 
 const AUTO_FIT_MIN_SIZE = 12;
@@ -114,7 +115,7 @@ export function createNoteRecord(
   node.style.cursor = 'grab';
 
   const editor = document.createElement('div');
-  editor.contentEditable = 'true';
+  editor.contentEditable = 'false';
   editor.spellcheck = false;
   editor.textContent = element.text;
   editor.style.width = '100%';
@@ -124,8 +125,8 @@ export function createNoteRecord(
   editor.style.outline = 'none';
   editor.style.borderRadius = '10px';
   editor.style.overflow = 'hidden';
-  editor.style.cursor = 'text';
-  editor.style.userSelect = 'text';
+  editor.style.cursor = 'default';
+  editor.style.userSelect = 'none';
   editor.style.whiteSpace = 'pre-wrap';
   editor.style.fontFamily = '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif';
   editor.style.color = '#133a5d';
@@ -135,9 +136,24 @@ export function createNoteRecord(
 
   const autoFitText = () => autoFitNoteEditor(editor);
   const scheduleAutoFit = createAutoFitScheduler(autoFitText);
+  const setEditingEnabled = (enabled: boolean) => {
+    editor.contentEditable = enabled ? 'true' : 'false';
+    editor.style.cursor = enabled ? 'text' : 'default';
+    editor.style.userSelect = enabled ? 'text' : 'none';
+    if (!enabled && document.activeElement === editor) {
+      editor.blur();
+    }
+  };
 
   const model = { ...element };
-  const record: NoteRecord = { model, node, editor, autoFitText, scheduleAutoFit };
+  const record: NoteRecord = {
+    model,
+    node,
+    editor,
+    autoFitText,
+    scheduleAutoFit,
+    setEditingEnabled
+  };
   applyLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
@@ -184,7 +200,7 @@ export function createNoteRecord(
     const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : null;
 
     const onPointerUp = () => {
-      editor.style.userSelect = 'text';
+      editor.style.userSelect = editor.isContentEditable ? 'text' : 'none';
       node.style.cursor = 'grab';
       node.removeEventListener('pointermove', onPointerMove);
       node.removeEventListener('pointerup', onPointerUp);

@@ -1020,6 +1020,7 @@ class BoardRenderer {
       record.node.dataset.selected = isSelected ? 'true' : 'false';
       record.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
       record.node.style.outlineOffset = isSelected ? '0px' : '';
+      record.note?.setEditingEnabled(false);
     });
 
     this.refreshSelectionFrame();
@@ -1031,7 +1032,28 @@ class BoardRenderer {
       enableDrag: false
     });
     note.node.addEventListener('pointerdown', (event) => {
+      if (
+        note.editor.isContentEditable &&
+        event.target instanceof Node &&
+        note.editor.contains(event.target)
+      ) {
+        this.selectSingleNote(note.model.id);
+        return;
+      }
+
       this.beginSelectionDrag(event, note.model.id);
+    });
+    note.node.addEventListener('dblclick', (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      if (!this.selectedNoteIds.has(note.model.id) || this.selectedNoteIds.size !== 1) {
+        return;
+      }
+
+      note.setEditingEnabled(true);
+      note.editor.focus();
     });
 
     const record: BoardRecord = {

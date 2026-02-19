@@ -36,6 +36,21 @@ describe('BoardComponent', () => {
     expect(screen.getByText('Test note')).toBeInTheDocument();
   });
 
+  it('enables note text editing only after a second click', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+
+    expect(editor.contentEditable).toBe('false');
+    fireEvent.click(noteNode);
+    expect(editor.contentEditable).toBe('false');
+
+    fireEvent.doubleClick(noteNode);
+    expect(editor.contentEditable).toBe('true');
+  });
+
   it('renders image elements', () => {
     render(<BoardComponent initialElements={[baseNote, baseImage]} />);
     expect(screen.getByAltText('Test elephant image')).toBeInTheDocument();

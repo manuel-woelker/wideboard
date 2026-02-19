@@ -165,7 +165,7 @@ class BoardRenderer {
 
   private updatePanBackground() {
     const offset = `${this.panOffset.x * this.zoom}px ${this.panOffset.y * this.zoom}px`;
-    this.host.style.backgroundPosition = `${offset}, ${offset}, ${offset}`;
+    this.host.style.backgroundPosition = `${offset}, ${offset}, center`;
     this.host.style.backgroundSize = `${GRID_SIZE * this.zoom}px ${GRID_SIZE * this.zoom}px, ${
       GRID_SIZE * this.zoom
     }px ${GRID_SIZE * this.zoom}px, 100% 100%`;

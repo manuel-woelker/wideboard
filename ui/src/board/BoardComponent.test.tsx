@@ -699,4 +699,13 @@ describe('BoardComponent', () => {
 
     expect(prevented).toBe(true);
   });
+
+  it('deletes selected elements when pressing Delete', () => {
+    render(<BoardComponent initialElements={[baseNote, baseImage]} />);
+
+    fireEvent.keyDown(window, { key: 'Delete' });
+
+    expect(document.querySelector('[data-element-id="test-note"]')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-element-id="test-image"]')).toBeInTheDocument();
+  });
 });

@@ -134,6 +134,7 @@ class BoardRenderer {
     this.host.addEventListener('paste', this.handlePaste);
     this.host.addEventListener('dragover', this.handleDragOver);
     this.host.addEventListener('drop', this.handleDrop);
+    window.addEventListener('keydown', this.handleKeyDown);
   }
 
   public destroy() {
@@ -144,6 +145,7 @@ class BoardRenderer {
     this.host.removeEventListener('paste', this.handlePaste);
     this.host.removeEventListener('dragover', this.handleDragOver);
     this.host.removeEventListener('drop', this.handleDrop);
+    window.removeEventListener('keydown', this.handleKeyDown);
     this.records.clear();
     this.selectionFrameNode.remove();
     this.host.replaceChildren();
@@ -353,6 +355,52 @@ class BoardRenderer {
     }
 
     return this.host.contains(activeElement);
+  }
+
+  private shouldHandleBoardKeyboard() {
+    const activeElement = document.activeElement;
+    if (!activeElement || activeElement === document.body) {
+      return true;
+    }
+
+    return this.host.contains(activeElement);
+  }
+
+  private isTextEditingElement(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    const tagName = target.tagName;
+    return (
+      target.isContentEditable ||
+      target.getAttribute('contenteditable') === 'true' ||
+      tagName === 'INPUT' ||
+      tagName === 'TEXTAREA'
+    );
+  }
+
+  private shouldAllowDefaultTextDelete(event: KeyboardEvent) {
+    if (this.isTextEditingElement(event.target)) {
+      return true;
+    }
+
+    return this.isTextEditingElement(document.activeElement);
+  }
+
+  private deleteSelectedElements() {
+    const selectedIds = Array.from(this.selectedNoteIds);
+    selectedIds.forEach((id) => {
+      const record = this.records.get(id);
+      if (!record) {
+        return;
+      }
+
+      record.node.remove();
+      this.records.delete(id);
+    });
+
+    this.setSelection([]);
   }
 
   private getActiveNoteRecord(): NoteRecord | null {
@@ -801,6 +849,23 @@ class BoardRenderer {
     });
 
     this.addImageFilesAtPosition(imageFiles, boardPosition);
+  };
+
+  private handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Delete') {
+      return;
+    }
+
+    if (!this.shouldHandleBoardKeyboard() || this.shouldAllowDefaultTextDelete(event)) {
+      return;
+    }
+
+    if (this.selectedNoteIds.size === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    this.deleteSelectedElements();
   };
 
   private handlePanStart = (event: PointerEvent) => {

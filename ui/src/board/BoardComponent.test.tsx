@@ -155,4 +155,43 @@ describe('BoardComponent', () => {
       addSpy.mockRestore();
     }
   });
+
+  it('copies and pastes the active note with clipboard data', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+
+    const clipboardData = (() => {
+      const store = new Map<string, string>();
+      return {
+        getData: (type: string) => store.get(type) ?? '',
+        setData: (type: string, value: string) => {
+          store.set(type, value);
+          return true;
+        }
+      };
+    })();
+
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      value: clipboardData
+    });
+
+    editor.dispatchEvent(copyEvent);
+
+    const notePayload = clipboardData.getData('application/x-wideboard-note');
+    expect(notePayload).toContain('"text":"Test note"');
+
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: clipboardData
+    });
+
+    editor.dispatchEvent(pasteEvent);
+
+    const noteNodes = document.querySelectorAll('[data-element-id]');
+    expect(noteNodes.length).toBe(2);
+  });
 });

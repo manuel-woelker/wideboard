@@ -47,6 +47,8 @@ class BoardRenderer {
 
   private noteSequence = 1;
 
+  private lastCopiedNote: NoteElement | null = null;
+
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
     this.host.style.position = 'relative';
@@ -65,9 +67,14 @@ class BoardRenderer {
         this.createNote(element);
       }
     });
+
+    this.host.addEventListener('copy', this.handleCopy);
+    this.host.addEventListener('paste', this.handlePaste);
   }
 
   public destroy() {
+    this.host.removeEventListener('copy', this.handleCopy);
+    this.host.removeEventListener('paste', this.handlePaste);
     this.records.clear();
     this.host.replaceChildren();
   }
@@ -126,6 +133,128 @@ class BoardRenderer {
     this.noteSequence += 1;
     return id;
   }
+
+  private isEventInsideHost(event: Event) {
+    const target = event.target;
+    return target instanceof Node && this.host.contains(target);
+  }
+
+  private getActiveNoteRecord(): NoteRecord | null {
+    if (!this.activeNoteId) {
+      return null;
+    }
+
+    const record = this.records.get(this.activeNoteId);
+    return record?.note ?? null;
+  }
+
+  private shouldAllowDefaultTextCopy(note: NoteRecord) {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return false;
+    }
+
+    const anchor = selection.anchorNode;
+    if (!anchor) {
+      return false;
+    }
+
+    return note.editor.contains(anchor);
+  }
+
+  private handleCopy = (event: ClipboardEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    const note = this.getActiveNoteRecord();
+    if (!note || this.shouldAllowDefaultTextCopy(note)) {
+      return;
+    }
+
+    const payload = {
+      kind: 'note',
+      text: note.model.text,
+      width: note.model.width,
+      height: note.model.height,
+      x: note.model.x,
+      y: note.model.y
+    };
+
+    const clipboard = event.clipboardData;
+    if (!clipboard) {
+      this.lastCopiedNote = { ...note.model };
+      return;
+    }
+
+    clipboard.setData('application/x-wideboard-note', JSON.stringify(payload));
+    clipboard.setData('text/plain', note.model.text);
+    this.lastCopiedNote = { ...note.model };
+    event.preventDefault();
+  };
+
+  private handlePaste = (event: ClipboardEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    const clipboard = event.clipboardData;
+    const rawPayload = clipboard?.getData('application/x-wideboard-note');
+    if (!rawPayload && !this.lastCopiedNote) {
+      return;
+    }
+
+    let source: NoteElement | null = null;
+    if (rawPayload) {
+      try {
+        const parsed = JSON.parse(rawPayload) as Partial<NoteElement> & { kind?: string };
+        if (parsed.kind === 'note' && typeof parsed.text === 'string') {
+          source = {
+            id: this.generateNoteId(),
+            kind: 'note',
+            x: typeof parsed.x === 'number' ? parsed.x : 0,
+            y: typeof parsed.y === 'number' ? parsed.y : 0,
+            width: typeof parsed.width === 'number' ? parsed.width : 260,
+            height: typeof parsed.height === 'number' ? parsed.height : 170,
+            text: parsed.text
+          };
+        }
+      } catch {
+        source = null;
+      }
+    }
+
+    if (!source && this.lastCopiedNote) {
+      source = {
+        ...this.lastCopiedNote,
+        id: this.generateNoteId()
+      };
+    }
+
+    if (!source) {
+      return;
+    }
+
+    const offset = 24;
+    const position = this.boundPosition(
+      { x: source.x + offset, y: source.y + offset },
+      { width: source.width, height: source.height }
+    );
+
+    const created = this.createNote({
+      id: source.id,
+      kind: 'note',
+      x: position.x,
+      y: position.y,
+      width: source.width,
+      height: source.height,
+      text: source.text
+    });
+
+    this.setActiveNote(created.note.model.id);
+    created.note.editor.focus();
+    event.preventDefault();
+  };
 
   /* 📖 # Why render resize handles only for the active note?
   Showing handles for every note creates visual noise and makes intent unclear.

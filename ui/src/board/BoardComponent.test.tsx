@@ -256,4 +256,19 @@ describe('BoardComponent', () => {
     expect(noteNode.style.left).not.toBe(initialLeft);
     expect(noteNode.style.width).not.toBe(initialWidth);
   });
+
+  it('prevents the context menu when right-click panning', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const board = screen.getByTestId('board-component');
+    const event = new MouseEvent('contextmenu', {
+      button: 2,
+      bubbles: true,
+      cancelable: true
+    });
+
+    const prevented = !board.dispatchEvent(event);
+
+    expect(prevented).toBe(true);
+  });
 });

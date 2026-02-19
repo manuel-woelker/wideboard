@@ -79,6 +79,7 @@ class BoardRenderer {
 
     this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.addEventListener('wheel', this.handleZoom, { passive: false });
+    this.host.addEventListener('contextmenu', this.handleContextMenu);
     this.host.addEventListener('copy', this.handleCopy);
     this.host.addEventListener('paste', this.handlePaste);
   }
@@ -86,6 +87,7 @@ class BoardRenderer {
   public destroy() {
     this.host.removeEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.removeEventListener('wheel', this.handleZoom);
+    this.host.removeEventListener('contextmenu', this.handleContextMenu);
     this.host.removeEventListener('copy', this.handleCopy);
     this.host.removeEventListener('paste', this.handlePaste);
     this.records.clear();
@@ -335,6 +337,16 @@ class BoardRenderer {
 
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+  };
+
+  private handleContextMenu = (event: MouseEvent) => {
+    if (!this.isEventInsideHost(event)) {
+      return;
+    }
+
+    if (event.button === 2) {
+      event.preventDefault();
+    }
   };
 
   private handleZoom = (event: WheelEvent) => {

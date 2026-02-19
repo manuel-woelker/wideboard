@@ -130,8 +130,8 @@ class BoardRenderer {
     this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.addEventListener('wheel', this.handleZoom, { passive: false });
     this.host.addEventListener('contextmenu', this.handleContextMenu);
-    this.host.addEventListener('copy', this.handleCopy);
-    this.host.addEventListener('paste', this.handlePaste);
+    window.addEventListener('copy', this.handleCopy);
+    window.addEventListener('paste', this.handlePaste);
     this.host.addEventListener('dragover', this.handleDragOver);
     this.host.addEventListener('drop', this.handleDrop);
     window.addEventListener('keydown', this.handleKeyDown);
@@ -141,8 +141,8 @@ class BoardRenderer {
     this.host.removeEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.removeEventListener('wheel', this.handleZoom);
     this.host.removeEventListener('contextmenu', this.handleContextMenu);
-    this.host.removeEventListener('copy', this.handleCopy);
-    this.host.removeEventListener('paste', this.handlePaste);
+    window.removeEventListener('copy', this.handleCopy);
+    window.removeEventListener('paste', this.handlePaste);
     this.host.removeEventListener('dragover', this.handleDragOver);
     this.host.removeEventListener('drop', this.handleDrop);
     window.removeEventListener('keydown', this.handleKeyDown);
@@ -344,7 +344,7 @@ class BoardRenderer {
     return target instanceof Node && this.host.contains(target);
   }
 
-  private shouldHandleBoardPaste(event: ClipboardEvent) {
+  private shouldHandleBoardClipboard(event: ClipboardEvent) {
     if (this.isEventInsideHost(event)) {
       return true;
     }
@@ -714,7 +714,7 @@ class BoardRenderer {
   }
 
   private handleCopy = (event: ClipboardEvent) => {
-    if (!this.isEventInsideHost(event)) {
+    if (!this.shouldHandleBoardClipboard(event)) {
       return;
     }
 
@@ -745,7 +745,7 @@ class BoardRenderer {
   };
 
   private handlePaste = (event: ClipboardEvent) => {
-    if (!this.shouldHandleBoardPaste(event)) {
+    if (!this.shouldHandleBoardClipboard(event)) {
       return;
     }
 

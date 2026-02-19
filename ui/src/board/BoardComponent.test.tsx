@@ -518,6 +518,38 @@ describe('BoardComponent', () => {
     expect(noteNodes.length).toBe(2);
   });
 
+  it('copies and pastes using window clipboard events', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const clipboardData = (() => {
+      const store = new Map<string, string>();
+      return {
+        getData: (type: string) => store.get(type) ?? '',
+        setData: (type: string, value: string) => {
+          store.set(type, value);
+          return true;
+        }
+      };
+    })();
+
+    const copyEvent = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copyEvent, 'clipboardData', {
+      value: clipboardData
+    });
+    window.dispatchEvent(copyEvent);
+
+    const notePayload = clipboardData.getData('application/x-wideboard-note');
+    expect(notePayload).toContain('"text":"Test note"');
+
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: clipboardData
+    });
+    window.dispatchEvent(pasteEvent);
+
+    expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+  });
+
   it('creates an image element when pasting image files', () => {
     const originalCreateObjectURL = URL.createObjectURL;
     URL.createObjectURL = vi.fn(() => 'blob:test-image-url');

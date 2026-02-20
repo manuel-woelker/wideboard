@@ -92,13 +92,13 @@ export type BoardOrderingAction =
 export type BoardCommand =
   | {
       /** Replaces current elements with provided list/order. */
-      type: 'set_elements';
+      type: 'setElements';
       /** New ordered element models. */
       elements: BoardElement[];
     }
   | {
       /** Adds one element to board state. */
-      type: 'add_element';
+      type: 'addElement';
       /** Element to insert. */
       element: BoardElement;
       /** Optional target insertion index in z-order. */
@@ -106,7 +106,7 @@ export type BoardCommand =
     }
   | {
       /** Removes matching elements by id. */
-      type: 'remove_elements';
+      type: 'removeElements';
       /** Element ids to remove. */
       ids: string[];
     }
@@ -120,17 +120,17 @@ export type BoardCommand =
     }
   | {
       /** Clears current selection. */
-      type: 'clear_selection';
+      type: 'clearSelection';
     }
   | {
       /** Moves selected elements by delta. */
-      type: 'move_selection';
+      type: 'moveSelection';
       /** Translation delta. */
       delta: BoardPoint;
     }
   | {
       /** Moves explicit element ids by delta. */
-      type: 'move_elements';
+      type: 'moveElements';
       /** Target element ids. */
       ids: string[];
       /** Translation delta. */
@@ -138,7 +138,7 @@ export type BoardCommand =
     }
   | {
       /** Sets viewport pan and optional zoom. */
-      type: 'set_viewport';
+      type: 'setViewport';
       /** Next horizontal pan offset. */
       panX: number;
       /** Next vertical pan offset. */
@@ -148,13 +148,13 @@ export type BoardCommand =
     }
   | {
       /** Applies incremental viewport pan. */
-      type: 'pan_viewport';
+      type: 'panViewport';
       /** Pan delta. */
       delta: BoardPoint;
     }
   | {
       /** Applies viewport zoom with optional anchor correction. */
-      type: 'zoom_viewport';
+      type: 'zoomViewport';
       /** Target zoom value. */
       zoom: number;
       /** Optional zoom anchor point. */
@@ -162,7 +162,7 @@ export type BoardCommand =
     }
   | {
       /** Applies z-order operation to current selection. */
-      type: 'order_selection';
+      type: 'orderSelection';
       /** Ordering action to perform. */
       action: BoardOrderingAction;
     };

@@ -284,7 +284,7 @@ if (import.meta.vitest) {
           });
         },
         act: (engine) => {
-          engine.dispatch.move_selection({
+          engine.dispatch.moveSelection({
             delta: { x: 5, y: -2 }
           });
         },

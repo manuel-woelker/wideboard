@@ -46,7 +46,7 @@ describe('BoardComponent', () => {
       throw new Error('Expected BoardComponent to expose its engine instance.');
     }
 
-    engine.dispatch.add_element({
+    engine.dispatch.addElement({
       element: {
         id: 'external-note-1',
         kind: 'note',

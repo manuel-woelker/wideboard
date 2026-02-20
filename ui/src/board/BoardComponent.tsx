@@ -336,7 +336,7 @@ class BoardRenderer {
       text: 'New note'
     };
     this.dispatchAndSync({
-      type: 'add_element',
+      type: 'addElement',
       element: createdElement
     });
     this.setSelection([createdElement.id], createdElement.id);
@@ -723,7 +723,7 @@ class BoardRenderer {
       };
       appliedDelta = delta;
       this.dispatchAndSync({
-        type: 'move_elements',
+        type: 'moveElements',
         ids: selectedIds,
         delta: stepDelta
       });
@@ -818,7 +818,7 @@ class BoardRenderer {
         return nextById.get(element.id) ?? element;
       });
       this.dispatchAndSync({
-        type: 'set_elements',
+        type: 'setElements',
         elements: nextElements
       });
       selected.forEach((element) => {
@@ -919,7 +919,7 @@ class BoardRenderer {
       };
 
       this.dispatchAndSync({
-        type: 'add_element',
+        type: 'addElement',
         element
       });
       createdIds.push(element.id);
@@ -1027,7 +1027,7 @@ class BoardRenderer {
       text: source.text
     };
     this.dispatchAndSync({
-      type: 'add_element',
+      type: 'addElement',
       element: createdElement
     });
     this.selectSingleNote(createdElement.id);
@@ -1125,7 +1125,7 @@ class BoardRenderer {
       };
       appliedDelta = delta;
       this.dispatchAndSync({
-        type: 'pan_viewport',
+        type: 'panViewport',
         delta: stepDelta
       });
     };
@@ -1279,7 +1279,7 @@ class BoardRenderer {
       };
     });
     this.dispatchAndSync({
-      type: 'set_elements',
+      type: 'setElements',
       elements: nextElements
     });
   }

@@ -214,7 +214,7 @@ export class BoardEngine {
   private readonly listeners = new Set<BoardEngineListener>();
   /** Command dispatch table mapped by command type. */
   private readonly commandHandlers: CommandHandlerMap;
-  /** Strict dispatch proxy for ergonomic command invocation. */
+  /** Strict dispatch object for ergonomic command invocation. */
   public readonly dispatch: BoardEngineDispatchProxy;
 
   public constructor(config: BoardEngineConfig = {}) {
@@ -369,43 +369,43 @@ export class BoardEngine {
     }
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
-      return this.dispatch.remove_elements({
+      return this.dispatch.removeElements({
         ids: this.state.selection
       });
     }
 
     if (event.key === 'ArrowLeft') {
-      return this.dispatch.move_selection({
+      return this.dispatch.moveSelection({
         delta: { x: -KEYBOARD_MOVE_STEP, y: 0 }
       });
     }
 
     if (event.key === 'ArrowRight') {
-      return this.dispatch.move_selection({
+      return this.dispatch.moveSelection({
         delta: { x: KEYBOARD_MOVE_STEP, y: 0 }
       });
     }
 
     if (event.key === 'ArrowUp') {
-      return this.dispatch.move_selection({
+      return this.dispatch.moveSelection({
         delta: { x: 0, y: -KEYBOARD_MOVE_STEP }
       });
     }
 
     if (event.key === 'ArrowDown') {
-      return this.dispatch.move_selection({
+      return this.dispatch.moveSelection({
         delta: { x: 0, y: KEYBOARD_MOVE_STEP }
       });
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === ']') {
-      return this.dispatch.order_selection({
+      return this.dispatch.orderSelection({
         action: 'bring_forward'
       });
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === '[') {
-      return this.dispatch.order_selection({
+      return this.dispatch.orderSelection({
         action: 'send_backward'
       });
     }
@@ -425,7 +425,7 @@ export class BoardEngine {
    */
   public handleWheel(event: BoardWheelEvent): BoardRevision {
     const zoomFactor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
-    return this.dispatch.zoom_viewport({
+    return this.dispatch.zoomViewport({
       zoom: this.state.viewport.zoom * zoomFactor,
       anchor: event.point
     });
@@ -467,47 +467,49 @@ export class BoardEngine {
     });
   }
 
-  /** Builds the strict `dispatch.<type>(payload)` proxy. */
+  /** Builds the strict `dispatch.<type>(payload)` plain function object. */
   private createDispatchProxy(): BoardEngineDispatchProxy {
-    return new Proxy({} as BoardEngineDispatchProxy, {
-      get: (_target, property) => {
-        if (typeof property !== 'string' || !(property in this.commandHandlers)) {
-          throw new Error(`Unknown board command "${String(property)}"`);
-        }
+    const commandTypes = Object.keys(this.commandHandlers) as CommandType[];
+    return Object.fromEntries(
+      commandTypes.map((commandType) => {
+        return [commandType, this.createDispatchMethod(commandType)];
+      })
+    ) as BoardEngineDispatchProxy;
+  }
 
-        const commandType = property as CommandType;
-        return (payload?: unknown) => {
-          const command = {
-            type: commandType,
-            ...((payload ?? {}) as object)
-          } as Extract<BoardCommand, { type: CommandType }>;
-          return this.execute(command);
-        };
-      }
-    });
+  private createDispatchMethod<TType extends CommandType>(
+    commandType: TType
+  ): DispatchMethod<TType> {
+    return ((payload?: CommandPayload<TType>) => {
+      const command = {
+        type: commandType,
+        ...((payload ?? {}) as object)
+      } as Extract<BoardCommand, { type: TType }>;
+      return this.execute(command);
+    }) as DispatchMethod<TType>;
   }
 
   /** Builds the board command dispatch table. */
   private createCommandHandlers(): CommandHandlerMap {
     return {
-      set_elements: (state, deltas, command) =>
+      setElements: (state, deltas, command) =>
         this.handleSetElementsCommand(state, deltas, command),
-      add_element: (state, deltas, command) => this.handleAddElementCommand(state, deltas, command),
-      remove_elements: (state, deltas, command) =>
+      addElement: (state, deltas, command) => this.handleAddElementCommand(state, deltas, command),
+      removeElements: (state, deltas, command) =>
         this.handleRemoveElementsCommand(state, deltas, command),
       select: (state, deltas, command) => this.handleSelectCommand(state, deltas, command),
-      clear_selection: (state, deltas) => this.handleClearSelectionCommand(state, deltas),
-      move_selection: (state, deltas, command) =>
+      clearSelection: (state, deltas) => this.handleClearSelectionCommand(state, deltas),
+      moveSelection: (state, deltas, command) =>
         this.handleMoveSelectionCommand(state, deltas, command),
-      move_elements: (state, deltas, command) =>
+      moveElements: (state, deltas, command) =>
         this.handleMoveElementsCommand(state, deltas, command),
-      set_viewport: (state, deltas, command) =>
+      setViewport: (state, deltas, command) =>
         this.handleSetViewportCommand(state, deltas, command),
-      pan_viewport: (state, deltas, command) =>
+      panViewport: (state, deltas, command) =>
         this.handlePanViewportCommand(state, deltas, command),
-      zoom_viewport: (state, deltas, command) =>
+      zoomViewport: (state, deltas, command) =>
         this.handleZoomViewportCommand(state, deltas, command),
-      order_selection: (state, deltas, command) =>
+      orderSelection: (state, deltas, command) =>
         this.handleOrderSelectionCommand(state, deltas, command)
     };
   }
@@ -515,7 +517,7 @@ export class BoardEngine {
   private handleSetElementsCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'set_elements' }>
+    command: Extract<BoardCommand, { type: 'setElements' }>
   ) {
     command.elements.forEach((element) => {
       this.elementRegistry.assertKnownKind(element.kind);
@@ -588,7 +590,7 @@ export class BoardEngine {
   private handleAddElementCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'add_element' }>
+    command: Extract<BoardCommand, { type: 'addElement' }>
   ) {
     this.elementRegistry.assertKnownKind(command.element.kind);
     if (state.elements[command.element.id]) {
@@ -613,7 +615,7 @@ export class BoardEngine {
   private handleRemoveElementsCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'remove_elements' }>
+    command: Extract<BoardCommand, { type: 'removeElements' }>
   ) {
     const ids = normalizeElementIds(command.ids, state);
     if (ids.length === 0) {
@@ -710,7 +712,7 @@ export class BoardEngine {
   private handleMoveSelectionCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'move_selection' }>
+    command: Extract<BoardCommand, { type: 'moveSelection' }>
   ) {
     if (command.delta.x === 0 && command.delta.y === 0) {
       return;
@@ -735,7 +737,7 @@ export class BoardEngine {
   private handleMoveElementsCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'move_elements' }>
+    command: Extract<BoardCommand, { type: 'moveElements' }>
   ) {
     if (command.delta.x === 0 && command.delta.y === 0) {
       return;
@@ -760,7 +762,7 @@ export class BoardEngine {
   private handleSetViewportCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'set_viewport' }>
+    command: Extract<BoardCommand, { type: 'setViewport' }>
   ) {
     const previousViewport = { ...state.viewport };
     const nextZoom =
@@ -787,7 +789,7 @@ export class BoardEngine {
   private handlePanViewportCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'pan_viewport' }>
+    command: Extract<BoardCommand, { type: 'panViewport' }>
   ) {
     if (command.delta.x === 0 && command.delta.y === 0) {
       return;
@@ -809,7 +811,7 @@ export class BoardEngine {
   private handleZoomViewportCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'zoom_viewport' }>
+    command: Extract<BoardCommand, { type: 'zoomViewport' }>
   ) {
     const nextZoom = clampZoom(command.zoom);
     if (nextZoom === state.viewport.zoom) {
@@ -842,7 +844,7 @@ export class BoardEngine {
   private handleOrderSelectionCommand(
     state: BoardState,
     deltas: BoardDelta[],
-    command: Extract<BoardCommand, { type: 'order_selection' }>
+    command: Extract<BoardCommand, { type: 'orderSelection' }>
   ) {
     const selectedIds = normalizeElementIds(state.selection, state);
     const previousOrder = [...state.elementOrder];
@@ -980,7 +982,7 @@ if (import.meta.vitest) {
       const revision1 = engine.dispatch.select({
         ids: ['note-1']
       });
-      const revision2 = engine.dispatch.move_selection({
+      const revision2 = engine.dispatch.moveSelection({
         delta: { x: 15, y: -5 }
       });
 
@@ -1055,7 +1057,7 @@ if (import.meta.vitest) {
         deltaX: 0,
         deltaY: -120
       });
-      engine.dispatch.pan_viewport({
+      engine.dispatch.panViewport({
         delta: { x: 20, y: -10 }
       });
 
@@ -1078,7 +1080,7 @@ if (import.meta.vitest) {
       engine.dispatch.select({
         ids: ['note-1']
       });
-      engine.dispatch.order_selection({
+      engine.dispatch.orderSelection({
         action: 'bring_to_front'
       });
 
@@ -1133,7 +1135,7 @@ if (import.meta.vitest) {
       });
 
       expect(() => {
-        engine.dispatch.add_element({
+        engine.dispatch.addElement({
           element: {
             id: 'unknown-1',
             kind: 'sticker',

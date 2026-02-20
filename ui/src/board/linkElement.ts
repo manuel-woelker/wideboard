@@ -49,6 +49,28 @@ export function createLinkRecord(
   node.style.display = 'grid';
   node.style.gridTemplateRows = '1fr';
 
+  const openLinkIcon = document.createElement('a');
+  openLinkIcon.target = '_blank';
+  openLinkIcon.rel = 'noopener noreferrer';
+  openLinkIcon.ariaLabel = 'Open link in new tab';
+  openLinkIcon.textContent = '↗';
+  openLinkIcon.dataset.testid = `link-open-icon-${model.id}`;
+  openLinkIcon.style.position = 'absolute';
+  openLinkIcon.style.top = '8px';
+  openLinkIcon.style.right = '8px';
+  openLinkIcon.style.width = '20px';
+  openLinkIcon.style.height = '20px';
+  openLinkIcon.style.borderRadius = '999px';
+  openLinkIcon.style.display = 'grid';
+  openLinkIcon.style.placeItems = 'center';
+  openLinkIcon.style.fontSize = '13px';
+  openLinkIcon.style.lineHeight = '1';
+  openLinkIcon.style.textDecoration = 'none';
+  openLinkIcon.style.background = 'rgba(15, 59, 97, 0.85)';
+  openLinkIcon.style.color = '#eaf8ff';
+  openLinkIcon.style.border = '1px solid rgba(255, 255, 255, 0.35)';
+  openLinkIcon.style.zIndex = '2';
+
   const previewImage = document.createElement('img');
   previewImage.style.display = 'none';
   previewImage.style.width = '100%';
@@ -110,6 +132,7 @@ export function createLinkRecord(
     record.model = { ...nextModel };
     title.textContent = nextModel.title;
     title.href = nextModel.url;
+    openLinkIcon.href = nextModel.url;
     description.textContent = nextModel.description ?? '';
     description.style.display = nextModel.description ? '-webkit-box' : 'none';
     hostname.textContent = getHostname(nextModel.url);
@@ -127,7 +150,7 @@ export function createLinkRecord(
   };
 
   body.append(title, description, hostname);
-  node.append(previewImage, body);
+  node.append(previewImage, body, openLinkIcon);
 
   const record: LinkRecord = {
     model,

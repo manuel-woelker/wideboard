@@ -58,6 +58,7 @@ class BoardRenderer {
   private readonly engine: BoardEngine;
 
   private readonly records = new Map<string, BoardRecord>();
+  private renderedElementOrder: string[] = [];
 
   private activeNoteId: string | null = null;
 
@@ -166,7 +167,22 @@ class BoardRenderer {
     record.image.model = element;
   }
 
+  private getEditingSnapshot() {
+    const editingRecord = Array.from(this.records.values()).find((record) => {
+      return record.kind === 'note' && Boolean(record.note?.editor.isContentEditable);
+    });
+    if (!editingRecord || editingRecord.kind !== 'note' || !editingRecord.note) {
+      return null;
+    }
+
+    return {
+      id: editingRecord.id,
+      hadFocus: document.activeElement === editingRecord.note.editor
+    };
+  }
+
   private syncFromEngineState(options: { resetEditing?: boolean } = {}) {
+    const editingSnapshot = this.getEditingSnapshot();
     const state = this.engine.getState();
     this.panOffset = {
       x: state.viewport.panX,
@@ -199,10 +215,33 @@ class BoardRenderer {
       this.syncRecordModel(existing, element);
       this.applyFrameWithPan(existing.node, element);
       existing.scheduleAutoFit();
-      this.host.append(existing.node);
     });
 
+    if (
+      this.renderedElementOrder.length !== state.elementOrder.length ||
+      this.renderedElementOrder.some((id, index) => state.elementOrder[index] !== id)
+    ) {
+      state.elementOrder.forEach((id) => {
+        const record = this.records.get(id);
+        if (!record) {
+          return;
+        }
+
+        this.host.append(record.node);
+      });
+      this.renderedElementOrder = [...state.elementOrder];
+    }
+
     this.setSelectionStyles(state.selection, this.activeNoteId, options.resetEditing ?? false);
+    if (!options.resetEditing && editingSnapshot) {
+      const editingRecord = this.records.get(editingSnapshot.id);
+      if (editingRecord?.kind === 'note' && editingRecord.note) {
+        editingRecord.note.setEditingEnabled(true);
+        if (editingSnapshot.hadFocus) {
+          editingRecord.note.editor.focus();
+        }
+      }
+    }
     this.refreshAllLayouts();
   }
 
@@ -248,6 +287,7 @@ class BoardRenderer {
     this.host.removeEventListener('drop', this.handleDrop);
     window.removeEventListener('keydown', this.handleKeyDown);
     this.records.clear();
+    this.renderedElementOrder = [];
     this.selectionFrameNode.remove();
     this.host.replaceChildren();
   }
@@ -551,7 +591,13 @@ class BoardRenderer {
     });
   }
 
-  private beginSelectionDrag(event: PointerEvent, noteId: string) {
+  private beginSelectionDrag(
+    event: PointerEvent,
+    noteId: string,
+    options: {
+      enableEditingOnTap?: () => void;
+    } = {}
+  ) {
     if (event.button !== 0) {
       return;
     }
@@ -612,6 +658,10 @@ class BoardRenderer {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
+
+      if (!hasStartedDrag) {
+        options.enableEditingOnTap?.();
+      }
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -1113,22 +1163,55 @@ class BoardRenderer {
     );
   }
 
+  private setSelectionPreservingEditing(
+    noteIds: Iterable<string>,
+    preferredActiveNoteId: string | null = null
+  ) {
+    const noteIdList = Array.from(noteIds);
+    if (preferredActiveNoteId) {
+      this.activeNoteId = preferredActiveNoteId;
+    }
+    this.dispatchAndSync(
+      {
+        type: 'select',
+        ids: noteIdList
+      },
+      {
+        resetEditing: false
+      }
+    );
+  }
+
   private createNote(element: NoteElement): BoardRecord {
     const note = createNoteRecord(element, {
       applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
       enableDrag: false
     });
     note.node.addEventListener('pointerdown', (event) => {
+      const selection = this.engine.getState().selection;
+      const wasSingleSelected = selection.length === 1 && selection[0] === note.model.id;
       if (
         note.editor.isContentEditable &&
         event.target instanceof Node &&
         note.editor.contains(event.target)
       ) {
-        this.selectSingleNote(note.model.id);
+        this.setSelectionPreservingEditing([note.model.id], note.model.id);
         return;
       }
 
-      this.beginSelectionDrag(event, note.model.id);
+      this.beginSelectionDrag(event, note.model.id, {
+        enableEditingOnTap: wasSingleSelected
+          ? () => {
+              const currentSelection = this.engine.getState().selection;
+              if (!currentSelection.includes(note.model.id) || currentSelection.length !== 1) {
+                return;
+              }
+
+              note.setEditingEnabled(true);
+              note.editor.focus();
+            }
+          : undefined
+      });
     });
     note.node.addEventListener('dblclick', (event) => {
       if (event.button !== 0) {

@@ -51,6 +51,40 @@ describe('BoardComponent', () => {
     expect(editor.contentEditable).toBe('true');
   });
 
+  it('keeps note editing enabled when clicking inside an active editor', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+
+    fireEvent.doubleClick(noteNode);
+    expect(editor.contentEditable).toBe('true');
+
+    fireEvent.pointerDown(editor, { button: 0, clientX: 40, clientY: 40 });
+    expect(editor.contentEditable).toBe('true');
+  });
+
+  it('keeps note editing enabled after typing a character', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+
+    fireEvent.doubleClick(noteNode);
+    expect(editor.contentEditable).toBe('true');
+
+    editor.textContent = 'Test noteX';
+    fireEvent.input(editor);
+
+    expect(editor.contentEditable).toBe('true');
+
+    editor.textContent = 'Test noteXY';
+    fireEvent.input(editor);
+    expect(editor.contentEditable).toBe('true');
+  });
+
   it('renders image elements', () => {
     render(<BoardComponent initialElements={[baseNote, baseImage]} />);
     expect(screen.getByAltText('Test elephant image')).toBeInTheDocument();

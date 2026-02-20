@@ -138,9 +138,8 @@ export function createNoteRecord(
     }
   };
 
-  const model = { ...element };
   const record: NoteRecord = {
-    model,
+    model: { ...element },
     node,
     editor,
     autoFitText,
@@ -150,7 +149,10 @@ export function createNoteRecord(
   applyLayout(record.node, record.model);
 
   editor.addEventListener('input', () => {
-    model.text = editor.textContent ?? '';
+    record.model = {
+      ...record.model,
+      text: editor.textContent ?? ''
+    };
     scheduleAutoFit();
   });
 
@@ -347,6 +349,28 @@ if (import.meta.vitest) {
         globalThis.requestAnimationFrame = originalRAF;
         globalThis.cancelAnimationFrame = originalCancelRAF;
       }
+    });
+
+    it('updates the current record model after external model replacement', () => {
+      const record = createNoteRecord({
+        id: 'note-test',
+        kind: 'note',
+        x: 10,
+        y: 20,
+        width: 200,
+        height: 120,
+        text: 'Hello'
+      });
+
+      record.model = {
+        ...record.model,
+        text: 'External update'
+      };
+
+      record.editor.textContent = 'Typed text';
+      record.editor.dispatchEvent(new Event('input'));
+
+      expect(record.model.text).toBe('Typed text');
     });
   });
 }

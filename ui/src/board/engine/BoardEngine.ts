@@ -286,6 +286,38 @@ function normalizeInsertionIndex(index: number, length: number) {
   return Math.max(0, Math.min(index, length));
 }
 
+function isPureTranslationElementUpdate(delta: BoardDelta) {
+  if (delta.type !== 'element_updated') {
+    return false;
+  }
+
+  if (typeof delta.previousIndex === 'number' || typeof delta.currentIndex === 'number') {
+    return false;
+  }
+
+  const { x: previousX, y: previousY, ...previousRest } = delta.previous;
+  const { x: currentX, y: currentY, ...currentRest } = delta.current;
+  if (previousX === currentX && previousY === currentY) {
+    return false;
+  }
+
+  return JSON.stringify(previousRest) === JSON.stringify(currentRest);
+}
+
+function getTranslationDeltaSignature(deltas: BoardDelta[]) {
+  if (deltas.length === 0 || !deltas.every((delta) => isPureTranslationElementUpdate(delta))) {
+    return null;
+  }
+
+  const ids = deltas.map((delta) => (delta.type === 'element_updated' ? delta.id : ''));
+  const uniqueIds = new Set(ids);
+  if (uniqueIds.size !== ids.length) {
+    return null;
+  }
+
+  return [...ids].sort().join('|');
+}
+
 /**
  * Strictly-typed command dispatch proxy API (`dispatch.<type>(payload)`).
  */
@@ -1098,14 +1130,73 @@ export class BoardEngine {
     }
 
     this.linearizeRedoTailIfNeeded();
-    this.history.push({
+    const nextEntry: BoardHistoryEntry = {
       forward: cloneDeltas(durableDeltas),
       backward: invertDeltas(durableDeltas),
       meta: {
         kind: 'user'
       }
-    });
+    };
+    const previousEntry = this.history[this.history.length - 1];
+    if (previousEntry && previousEntry.meta.kind === 'user') {
+      const coalesced = this.tryCoalesceConsecutiveMoveEntries(previousEntry, nextEntry);
+      if (coalesced) {
+        this.history[this.history.length - 1] = coalesced;
+        this.historyCursor = this.history.length - 1;
+        return;
+      }
+    }
+
+    this.history.push(nextEntry);
     this.historyCursor = this.history.length - 1;
+  }
+
+  private tryCoalesceConsecutiveMoveEntries(
+    previousEntry: BoardHistoryEntry,
+    nextEntry: BoardHistoryEntry
+  ): BoardHistoryEntry | null {
+    const previousSignature = getTranslationDeltaSignature(previousEntry.forward);
+    const nextSignature = getTranslationDeltaSignature(nextEntry.forward);
+    if (!previousSignature || !nextSignature || previousSignature !== nextSignature) {
+      return null;
+    }
+
+    const previousById = new Map<string, Extract<BoardDelta, { type: 'element_updated' }>>();
+    previousEntry.forward.forEach((delta) => {
+      if (delta.type === 'element_updated') {
+        previousById.set(delta.id, delta);
+      }
+    });
+
+    const nextById = new Map<string, Extract<BoardDelta, { type: 'element_updated' }>>();
+    nextEntry.forward.forEach((delta) => {
+      if (delta.type === 'element_updated') {
+        nextById.set(delta.id, delta);
+      }
+    });
+
+    const mergedForward: BoardDelta[] = [];
+    for (const [id, previous] of previousById) {
+      const next = nextById.get(id);
+      if (!next) {
+        return null;
+      }
+
+      mergedForward.push({
+        type: 'element_updated',
+        id,
+        previous: cloneElement(previous.previous),
+        current: cloneElement(next.current)
+      });
+    }
+
+    return {
+      forward: mergedForward,
+      backward: invertDeltas(mergedForward),
+      meta: {
+        kind: 'user'
+      }
+    };
   }
 
   private linearizeRedoTailIfNeeded() {
@@ -1743,6 +1834,29 @@ if (import.meta.vitest) {
       expect(engine.getState().elements['note-1'].y).toBe(15);
     });
 
+    it('coalesces consecutive move commits into one undo step', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.select({
+        ids: ['note-1']
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 10, y: 0 }
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 5, y: 0 }
+      });
+      expect(engine.getState().elements['note-1'].x).toBe(25);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(10);
+
+      engine.redo();
+      expect(engine.getState().elements['note-1'].x).toBe(25);
+    });
+
     it('preserves undone future states after branching edits', () => {
       const engine = new BoardEngine({
         initialElements: testElements
@@ -1760,21 +1874,21 @@ if (import.meta.vitest) {
       expect(engine.getState().elements['note-1'].x).toBe(30);
 
       engine.undo();
-      expect(engine.getState().elements['note-1'].x).toBe(20);
+      expect(engine.getState().elements['note-1'].x).toBe(10);
 
       engine.dispatch.moveSelection({
         delta: { x: 5, y: 0 }
       });
-      expect(engine.getState().elements['note-1'].x).toBe(25);
+      expect(engine.getState().elements['note-1'].x).toBe(15);
 
       engine.undo();
-      expect(engine.getState().elements['note-1'].x).toBe(20);
+      expect(engine.getState().elements['note-1'].x).toBe(10);
 
       engine.undo();
       expect(engine.getState().elements['note-1'].x).toBe(30);
 
       engine.undo();
-      expect(engine.getState().elements['note-1'].x).toBe(20);
+      expect(engine.getState().elements['note-1'].x).toBe(10);
     });
 
     it('handles keyboard undo and redo accelerators', () => {

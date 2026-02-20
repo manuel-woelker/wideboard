@@ -1,14 +1,7 @@
 import { applyFrameLayout, moveFrame, type PointerDelta } from './elementFrame';
+import type { BoardNoteElement } from './engine/boardEngineTypes';
 
-export interface NoteElement {
-  id: string;
-  kind: 'note';
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  text: string;
-}
+export type NoteElement = BoardNoteElement;
 
 export interface NoteRecord {
   model: NoteElement;

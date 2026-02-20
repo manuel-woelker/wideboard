@@ -11,10 +11,9 @@ import {
 } from './elementFrame';
 import { createImageRecord, type ImageElement, type ImageRecord } from './imageElement';
 import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
-export type { ImageElement } from './imageElement';
-export type { NoteElement } from './noteElement';
-
-export type BoardElement = NoteElement | ImageElement;
+import { WIDEBOARD_NOTE_CLIPBOARD_MIME } from './engine/boardEvents';
+import type { BoardElement, BoardImageElement, BoardNoteElement } from './engine/boardEngineTypes';
+export type { BoardElement, BoardImageElement as ImageElement, BoardNoteElement as NoteElement };
 
 export interface BoardComponentProps {
   boardId?: string;
@@ -738,7 +737,7 @@ class BoardRenderer {
       return;
     }
 
-    clipboard.setData('application/x-wideboard-note', JSON.stringify(payload));
+    clipboard.setData(WIDEBOARD_NOTE_CLIPBOARD_MIME, JSON.stringify(payload));
     clipboard.setData('text/plain', note.model.text);
     this.lastCopiedNote = { ...note.model };
     event.preventDefault();
@@ -757,7 +756,7 @@ class BoardRenderer {
       return;
     }
 
-    const rawPayload = clipboard?.getData('application/x-wideboard-note');
+    const rawPayload = clipboard?.getData(WIDEBOARD_NOTE_CLIPBOARD_MIME);
     if (!rawPayload && !this.lastCopiedNote) {
       return;
     }

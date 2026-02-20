@@ -1,11 +1,7 @@
-import { applyFrameLayout, type FrameRect } from './elementFrame';
+import { applyFrameLayout } from './elementFrame';
+import type { BoardImageElement } from './engine/boardEngineTypes';
 
-export interface ImageElement extends FrameRect {
-  id: string;
-  kind: 'image';
-  src: string;
-  alt: string;
-}
+export type ImageElement = BoardImageElement;
 
 export interface ImageRecord {
   model: ImageElement;

@@ -449,7 +449,7 @@ describe('BoardComponent', () => {
     expect(board.getAttribute('style')).toContain('data:image/svg+xml');
   });
 
-  it('creates a text note on canvas click when in note adding mode', () => {
+  it('creates a text note on canvas click when in note adding mode', async () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     const action = screen.getByTestId('create-note-action');
     const board = screen.getByTestId('board-component');
@@ -459,6 +459,13 @@ describe('BoardComponent', () => {
     fireEvent.pointerDown(board, { button: 0, clientX: 260, clientY: 200 });
 
     expect(screen.getByText('New note')).toBeInTheDocument();
+    await waitFor(() => {
+      const createdEditor = document.querySelector(
+        '[data-testid="note-editor-note-1"]'
+      ) as HTMLDivElement;
+      expect(createdEditor.contentEditable).toBe('true');
+      expect(window.getSelection()?.toString()).toBe('New note');
+    });
     expect(action).toHaveAttribute('aria-pressed', 'false');
   });
 
@@ -577,7 +584,7 @@ describe('BoardComponent', () => {
     expect(noteNodes.length).toBe(2);
   });
 
-  it('copies and pastes using window clipboard events', () => {
+  it('copies and pastes using window clipboard events', async () => {
     render(<BoardComponent initialElements={[baseNote]} />);
 
     const clipboardData = (() => {
@@ -607,6 +614,12 @@ describe('BoardComponent', () => {
     window.dispatchEvent(pasteEvent);
 
     expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+    await waitFor(() => {
+      const pastedEditor = document.querySelector(
+        '[data-testid="note-editor-note-1"]'
+      ) as HTMLDivElement;
+      expect(pastedEditor.contentEditable).toBe('true');
+    });
   });
 
   it('creates an image element when pasting image files', () => {

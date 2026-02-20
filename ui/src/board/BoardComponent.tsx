@@ -372,7 +372,9 @@ class BoardRenderer {
       element: createdElement
     });
     this.setSelection([createdElement.id], createdElement.id);
-    this.records.get(createdElement.id)?.note?.editor.focus();
+    this.enableEditingForNoteById(createdElement.id, {
+      selectAll: true
+    });
   }
 
   public clearActiveNote() {
@@ -1217,7 +1219,9 @@ class BoardRenderer {
       element: createdElement
     });
     this.selectSingleNote(createdElement.id);
-    this.records.get(createdElement.id)?.note?.editor.focus();
+    this.enableEditingForNoteById(createdElement.id, {
+      selectAll: true
+    });
     event.preventDefault();
   };
 
@@ -1465,6 +1469,26 @@ class BoardRenderer {
 
   private getSelectionIds() {
     return [...this.engine.getState().selection];
+  }
+
+  private enableEditingForNoteById(noteId: string, options: { selectAll?: boolean } = {}) {
+    requestAnimationFrame(() => {
+      const record = this.records.get(noteId);
+      if (record?.kind === 'note' && record.note) {
+        this.enableNoteEditing(record.note);
+        if (options.selectAll) {
+          const selection = window.getSelection();
+          if (!selection) {
+            return;
+          }
+
+          const range = document.createRange();
+          range.selectNodeContents(record.note.editor);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+    });
   }
 
   private commitNoteText(noteId: string, text: string) {

@@ -13,6 +13,8 @@ export interface LinkBoardCallbacks {
   beginSelectionDrag: (event: PointerEvent, elementId: string) => void;
 }
 
+const LINK_CARD_BODY_HEIGHT = 96;
+
 function getHostname(url: string) {
   try {
     return new URL(url).hostname;
@@ -44,13 +46,13 @@ export function createLinkRecord(
   node.style.overflow = 'hidden';
   node.style.touchAction = 'none';
   node.style.cursor = 'grab';
-  node.style.display = 'flex';
-  node.style.flexDirection = 'column';
+  node.style.display = 'grid';
+  node.style.gridTemplateRows = '1fr';
 
   const previewImage = document.createElement('img');
   previewImage.style.display = 'none';
   previewImage.style.width = '100%';
-  previewImage.style.height = '62%';
+  previewImage.style.height = '100%';
   previewImage.style.objectFit = 'cover';
   previewImage.style.pointerEvents = 'none';
   previewImage.draggable = false;
@@ -63,6 +65,7 @@ export function createLinkRecord(
   body.style.gap = '4px';
   body.style.height = '100%';
   body.style.boxSizing = 'border-box';
+  body.style.minHeight = '0';
 
   const title = document.createElement('a');
   title.style.fontFamily = '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif';
@@ -73,8 +76,9 @@ export function createLinkRecord(
   title.style.textDecoration = 'none';
   title.style.overflow = 'hidden';
   title.style.display = '-webkit-box';
-  title.style.webkitLineClamp = '2';
+  title.style.webkitLineClamp = '1';
   title.style.webkitBoxOrient = 'vertical';
+  title.style.minHeight = '1.35em';
   title.target = '_blank';
   title.rel = 'noopener noreferrer';
   title.dataset.testid = `link-title-${model.id}`;
@@ -86,9 +90,9 @@ export function createLinkRecord(
   description.style.color = '#376082';
   description.style.overflow = 'hidden';
   description.style.display = '-webkit-box';
-  description.style.webkitLineClamp = '3';
+  description.style.webkitLineClamp = '2';
   description.style.webkitBoxOrient = 'vertical';
-  description.style.minHeight = '0';
+  description.style.minHeight = '2.7em';
 
   const hostname = document.createElement('div');
   hostname.style.marginTop = 'auto';
@@ -113,12 +117,12 @@ export function createLinkRecord(
       previewImage.style.display = 'block';
       previewImage.src = nextModel.imageSrc;
       previewImage.alt = nextModel.title;
-      body.style.height = '38%';
+      node.style.gridTemplateRows = `minmax(0, 1fr) ${LINK_CARD_BODY_HEIGHT}px`;
     } else {
       previewImage.style.display = 'none';
       previewImage.removeAttribute('src');
       previewImage.alt = '';
-      body.style.height = '100%';
+      node.style.gridTemplateRows = '1fr';
     }
   };
 

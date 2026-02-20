@@ -49,6 +49,20 @@ const DEFAULT_BOARD: BoardModel = {
       height: 768,
       src: elephantImage,
       alt: 'Elephant in the welcome board'
+    },
+    {
+      id: 'welcome-link-hofstadter',
+      kind: 'link',
+      x: 1020,
+      y: 120,
+      width: 340,
+      height: 220,
+      url: "https://devterms.com/define/hofstadter's-law",
+      title: "What is Hofstadter's Law? | DevTerms",
+      description:
+        "Hofstadter's Law: It always takes longer than you expect, even when you take into account Hofstadter's Law.",
+      imageSrc:
+        "https://devterms.com/api/og/hofstadter's-law?t=1426f4567a06ca419c93bd633ff203e1a325d2edebd5677733ab339f9754972d"
     }
   ]
 };

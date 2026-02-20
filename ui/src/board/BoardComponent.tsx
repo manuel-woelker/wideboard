@@ -44,7 +44,7 @@ const DEFAULT_IMAGE_SIZE: MinimumSize = {
 };
 const DEFAULT_LINK_SIZE: MinimumSize = {
   width: 340,
-  height: 180
+  height: 220
 };
 const IMAGE_INSERT_OFFSET = 24;
 
@@ -1081,7 +1081,8 @@ class BoardRenderer {
         ...current,
         title: preview.title ?? current.title,
         description: preview.description,
-        imageSrc: preview.imageSrc
+        imageSrc: preview.imageSrc,
+        height: preview.imageSrc ? Math.max(current.height, DEFAULT_LINK_SIZE.height) : current.height
       };
     });
 

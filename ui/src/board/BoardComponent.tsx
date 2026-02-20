@@ -591,11 +591,54 @@ class BoardRenderer {
     });
   }
 
+  private placeCaretAtClientPoint(editor: HTMLDivElement, clientX: number, clientY: number) {
+    const selection = window.getSelection();
+    if (!selection) {
+      return;
+    }
+
+    const documentWithCaretRange = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const documentWithCaretPosition = document as Document & {
+      caretPositionFromPoint?: (
+        x: number,
+        y: number
+      ) => {
+        offsetNode: Node;
+        offset: number;
+      } | null;
+    };
+
+    const caretPosition = documentWithCaretPosition.caretPositionFromPoint?.(clientX, clientY);
+    if (caretPosition && editor.contains(caretPosition.offsetNode)) {
+      const range = document.createRange();
+      range.setStart(caretPosition.offsetNode, caretPosition.offset);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+
+    const caretRange = documentWithCaretRange.caretRangeFromPoint?.(clientX, clientY);
+    if (caretRange && editor.contains(caretRange.startContainer)) {
+      selection.removeAllRanges();
+      selection.addRange(caretRange);
+      return;
+    }
+
+    const fallbackRange = document.createRange();
+    fallbackRange.selectNodeContents(editor);
+    fallbackRange.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(fallbackRange);
+  }
+
   private beginSelectionDrag(
     event: PointerEvent,
     noteId: string,
     options: {
-      enableEditingOnTap?: () => void;
+      enableEditingOnTap?: (tapEvent: PointerEvent) => void;
     } = {}
   ) {
     if (event.button !== 0) {
@@ -654,13 +697,13 @@ class BoardRenderer {
       this.refreshSelectionFrame();
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (upEvent: PointerEvent) => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
 
       if (!hasStartedDrag) {
-        options.enableEditingOnTap?.();
+        options.enableEditingOnTap?.(upEvent);
       }
     };
 
@@ -1201,7 +1244,7 @@ class BoardRenderer {
 
       this.beginSelectionDrag(event, note.model.id, {
         enableEditingOnTap: wasSingleSelected
-          ? () => {
+          ? (tapEvent) => {
               const currentSelection = this.engine.getState().selection;
               if (!currentSelection.includes(note.model.id) || currentSelection.length !== 1) {
                 return;
@@ -1209,6 +1252,7 @@ class BoardRenderer {
 
               note.setEditingEnabled(true);
               note.editor.focus();
+              this.placeCaretAtClientPoint(note.editor, tapEvent.clientX, tapEvent.clientY);
             }
           : undefined
       });

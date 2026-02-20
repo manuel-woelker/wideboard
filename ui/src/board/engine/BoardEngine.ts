@@ -428,59 +428,59 @@ export class BoardEngine {
     if (event.phase === 'down' && event.button === 0 && event.targetElementId) {
       return this.commit(
         (state, deltas) => {
-        const targetId = event.targetElementId;
-        if (!targetId || !state.elements[targetId]) {
-          return;
-        }
-
-        const previousSelection = [...state.selection];
-        let nextSelection = [...state.selection];
-
-        if (event.shiftKey) {
-          if (nextSelection.includes(targetId)) {
-            nextSelection = nextSelection.filter((id) => id !== targetId);
-          } else {
-            nextSelection.push(targetId);
+          const targetId = event.targetElementId;
+          if (!targetId || !state.elements[targetId]) {
+            return;
           }
-        } else if (!nextSelection.includes(targetId) || nextSelection.length !== 1) {
-          nextSelection = [targetId];
-        }
 
-        nextSelection = normalizeElementIds(nextSelection, state);
-        if (!areStringListsEqual(previousSelection, nextSelection)) {
-          state.selection = nextSelection;
+          const previousSelection = [...state.selection];
+          let nextSelection = [...state.selection];
+
+          if (event.shiftKey) {
+            if (nextSelection.includes(targetId)) {
+              nextSelection = nextSelection.filter((id) => id !== targetId);
+            } else {
+              nextSelection.push(targetId);
+            }
+          } else if (!nextSelection.includes(targetId) || nextSelection.length !== 1) {
+            nextSelection = [targetId];
+          }
+
+          nextSelection = normalizeElementIds(nextSelection, state);
+          if (!areStringListsEqual(previousSelection, nextSelection)) {
+            state.selection = nextSelection;
+            deltas.push({
+              type: 'selection_changed',
+              previous: previousSelection,
+              current: [...state.selection]
+            });
+          }
+
+          if (state.selection.length === 0) {
+            return;
+          }
+
+          const previousInteraction = state.interaction;
+          const startPositions = Object.fromEntries(
+            state.selection.map((id) => {
+              const element = state.elements[id];
+              return [id, { x: element.x, y: element.y }];
+            })
+          );
+
+          state.interaction = {
+            mode: 'dragging_selection',
+            pointerId: event.pointerId,
+            origin: { ...event.point },
+            elementIds: [...state.selection],
+            startPositions
+          };
+
           deltas.push({
-            type: 'selection_changed',
-            previous: previousSelection,
-            current: [...state.selection]
+            type: 'interaction_changed',
+            previous: { mode: previousInteraction.mode },
+            current: { mode: state.interaction.mode }
           });
-        }
-
-        if (state.selection.length === 0) {
-          return;
-        }
-
-        const previousInteraction = state.interaction;
-        const startPositions = Object.fromEntries(
-          state.selection.map((id) => {
-            const element = state.elements[id];
-            return [id, { x: element.x, y: element.y }];
-          })
-        );
-
-        state.interaction = {
-          mode: 'dragging_selection',
-          pointerId: event.pointerId,
-          origin: { ...event.point },
-          elementIds: [...state.selection],
-          startPositions
-        };
-
-        deltas.push({
-          type: 'interaction_changed',
-          previous: { mode: previousInteraction.mode },
-          current: { mode: state.interaction.mode }
-        });
         },
         {
           historyPolicy: 'none'
@@ -496,46 +496,46 @@ export class BoardEngine {
     ) {
       return this.commit(
         (state, deltas) => {
-        if (!stateIsDraggingSelection(state)) {
-          return;
-        }
-
-        const deltaX = event.point.x - state.interaction.origin.x;
-        const deltaY = event.point.y - state.interaction.origin.y;
-        if (deltaX === 0 && deltaY === 0) {
-          return;
-        }
-
-        state.interaction.elementIds.forEach((id) => {
-          const element = state.elements[id];
-          const start = state.interaction.startPositions[id];
-          if (!element || !start) {
+          if (!stateIsDraggingSelection(state)) {
             return;
           }
 
-          const previousElement = cloneElement(element);
-          const nextElement = this.elementRegistry.reduce(
-            {
-              ...element,
-              x: start.x,
-              y: start.y
-            },
-            {
-              type: 'translate',
-              delta: {
-                x: deltaX,
-                y: deltaY
-              }
+          const deltaX = event.point.x - state.interaction.origin.x;
+          const deltaY = event.point.y - state.interaction.origin.y;
+          if (deltaX === 0 && deltaY === 0) {
+            return;
+          }
+
+          state.interaction.elementIds.forEach((id) => {
+            const element = state.elements[id];
+            const start = state.interaction.startPositions[id];
+            if (!element || !start) {
+              return;
             }
-          );
-          state.elements[id] = nextElement;
-          deltas.push({
-            type: 'element_updated',
-            id,
-            previous: previousElement,
-            current: cloneElement(nextElement)
+
+            const previousElement = cloneElement(element);
+            const nextElement = this.elementRegistry.reduce(
+              {
+                ...element,
+                x: start.x,
+                y: start.y
+              },
+              {
+                type: 'translate',
+                delta: {
+                  x: deltaX,
+                  y: deltaY
+                }
+              }
+            );
+            state.elements[id] = nextElement;
+            deltas.push({
+              type: 'element_updated',
+              id,
+              previous: previousElement,
+              current: cloneElement(nextElement)
+            });
           });
-        });
         },
         {
           historyPolicy: 'coalescing'
@@ -551,17 +551,17 @@ export class BoardEngine {
     ) {
       return this.commit(
         (state, deltas) => {
-        if (!stateIsDraggingSelection(state)) {
-          return;
-        }
+          if (!stateIsDraggingSelection(state)) {
+            return;
+          }
 
-        const previousInteractionMode = state.interaction.mode;
-        (state as BoardState).interaction = { mode: 'idle' };
-        deltas.push({
-          type: 'interaction_changed',
-          previous: { mode: previousInteractionMode },
-          current: { mode: 'idle' }
-        });
+          const previousInteractionMode = state.interaction.mode;
+          (state as BoardState).interaction = { mode: 'idle' };
+          deltas.push({
+            type: 'interaction_changed',
+            previous: { mode: previousInteractionMode },
+            current: { mode: 'idle' }
+          });
         },
         {
           historyPolicy: 'none'

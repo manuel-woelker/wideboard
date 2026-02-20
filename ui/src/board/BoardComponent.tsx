@@ -1091,7 +1091,9 @@ class BoardRenderer {
         title: preview.title ?? current.title,
         description: preview.description,
         imageSrc: preview.imageSrc,
-        height: preview.imageSrc ? Math.max(current.height, DEFAULT_LINK_SIZE.height) : current.height
+        height: preview.imageSrc
+          ? Math.max(current.height, DEFAULT_LINK_SIZE.height)
+          : current.height
       };
     });
 
@@ -1249,7 +1251,13 @@ class BoardRenderer {
   };
 
   private handleKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== 'Delete') {
+    const normalizedKey = event.key.toLowerCase();
+    const isDelete = event.key === 'Delete';
+    const isAccelerator = event.ctrlKey || event.metaKey;
+    const isUndo = isAccelerator && !event.shiftKey && normalizedKey === 'z';
+    const isRedo =
+      isAccelerator && (normalizedKey === 'y' || (event.shiftKey && normalizedKey === 'z'));
+    if (!isDelete && !isUndo && !isRedo) {
       return;
     }
 
@@ -1257,12 +1265,20 @@ class BoardRenderer {
       return;
     }
 
-    if (this.engine.getState().selection.length === 0) {
+    if (isDelete && this.engine.getState().selection.length === 0) {
       return;
     }
 
     event.preventDefault();
     this.runEngineMutation(() => {
+      if (isUndo) {
+        return this.engine.undo();
+      }
+
+      if (isRedo) {
+        return this.engine.redo();
+      }
+
       return this.engine.handleKeyboard({
         type: 'keyboard',
         phase: 'down',

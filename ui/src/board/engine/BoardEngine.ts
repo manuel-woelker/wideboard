@@ -173,6 +173,118 @@ type CommandPayload<TType extends CommandType> = Omit<
 type DispatchMethod<TType extends CommandType> = keyof CommandPayload<TType> extends never
   ? (payload?: CommandPayload<TType>) => BoardRevision
   : (payload: CommandPayload<TType>) => BoardRevision;
+interface BoardHistoryEntry {
+  forward: BoardDelta[];
+  backward: BoardDelta[];
+  meta: {
+    kind: 'user' | 'synthetic';
+    groupId?: string;
+  };
+}
+
+function cloneDelta(delta: BoardDelta): BoardDelta {
+  switch (delta.type) {
+    case 'element_added':
+      return {
+        type: 'element_added',
+        element: cloneElement(delta.element),
+        index: delta.index
+      };
+    case 'element_removed':
+      return {
+        type: 'element_removed',
+        element: cloneElement(delta.element),
+        index: delta.index
+      };
+    case 'element_updated':
+      return {
+        type: 'element_updated',
+        id: delta.id,
+        previous: cloneElement(delta.previous),
+        current: cloneElement(delta.current),
+        previousIndex: delta.previousIndex,
+        currentIndex: delta.currentIndex
+      };
+    case 'selection_changed':
+      return {
+        type: 'selection_changed',
+        previous: [...delta.previous],
+        current: [...delta.current]
+      };
+    case 'viewport_changed':
+      return {
+        type: 'viewport_changed',
+        previous: { ...delta.previous },
+        current: { ...delta.current }
+      };
+    default:
+      return {
+        type: 'interaction_changed',
+        previous: { ...delta.previous },
+        current: { ...delta.current }
+      };
+  }
+}
+
+function cloneDeltas(deltas: BoardDelta[]): BoardDelta[] {
+  return deltas.map((delta) => cloneDelta(delta));
+}
+
+function invertDelta(delta: BoardDelta): BoardDelta {
+  switch (delta.type) {
+    case 'element_added':
+      return {
+        type: 'element_removed',
+        element: cloneElement(delta.element),
+        index: delta.index
+      };
+    case 'element_removed':
+      return {
+        type: 'element_added',
+        element: cloneElement(delta.element),
+        index: delta.index
+      };
+    case 'element_updated':
+      return {
+        type: 'element_updated',
+        id: delta.id,
+        previous: cloneElement(delta.current),
+        current: cloneElement(delta.previous),
+        previousIndex: delta.currentIndex,
+        currentIndex: delta.previousIndex
+      };
+    case 'selection_changed':
+      return {
+        type: 'selection_changed',
+        previous: [...delta.current],
+        current: [...delta.previous]
+      };
+    case 'viewport_changed':
+      return {
+        type: 'viewport_changed',
+        previous: { ...delta.current },
+        current: { ...delta.previous }
+      };
+    default:
+      return {
+        type: 'interaction_changed',
+        previous: { ...delta.current },
+        current: { ...delta.previous }
+      };
+  }
+}
+
+function invertDeltas(deltas: BoardDelta[]): BoardDelta[] {
+  return [...deltas].reverse().map((delta) => invertDelta(delta));
+}
+
+function isDurableHistoryDelta(delta: BoardDelta) {
+  return delta.type !== 'interaction_changed';
+}
+
+function normalizeInsertionIndex(index: number, length: number) {
+  return Math.max(0, Math.min(index, length));
+}
 
 /**
  * Strictly-typed command dispatch proxy API (`dispatch.<type>(payload)`).
@@ -211,6 +323,12 @@ export class BoardEngine {
 
   /** Revision-ordered delta envelopes for incremental queries. */
   private readonly deltaHistory: BoardDeltaEnvelope[] = [];
+  /** Linear undo/redo history of durable board mutations. */
+  private readonly history: BoardHistoryEntry[] = [];
+  /** Points at the currently applied history entry; -1 means no entries applied. */
+  private historyCursor = -1;
+  /** Monotonic synthetic group identifier sequence. */
+  private syntheticHistoryGroupSequence = 0;
   /** Subscribers notified after each committed revision. */
   private readonly listeners = new Set<BoardEngineListener>();
   /** Command dispatch table mapped by command type. */
@@ -367,6 +485,16 @@ export class BoardEngine {
   public handleKeyboard(event: BoardKeyboardEvent): BoardRevision {
     if (event.phase !== 'down') {
       return this.revision;
+    }
+
+    const isAccelerator = event.ctrlKey || event.metaKey;
+    const normalizedKey = event.key.toLowerCase();
+    if (isAccelerator && !event.shiftKey && normalizedKey === 'z') {
+      return this.undo();
+    }
+
+    if (isAccelerator && (normalizedKey === 'y' || (event.shiftKey && normalizedKey === 'z'))) {
+      return this.redo();
     }
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -888,6 +1016,46 @@ export class BoardEngine {
   }
 
   /**
+   * Indicates whether a previous durable state is available.
+   */
+  public canUndo() {
+    return this.historyCursor >= 0;
+  }
+
+  /**
+   * Indicates whether a newer durable state is available.
+   */
+  public canRedo() {
+    return this.historyCursor < this.history.length - 1;
+  }
+
+  /**
+   * Reverts one durable history entry.
+   */
+  public undo(): BoardRevision {
+    if (!this.canUndo()) {
+      return this.revision;
+    }
+
+    const entry = this.history[this.historyCursor];
+    const nextCursor = this.historyCursor - 1;
+    return this.applyHistoryDeltas(entry.backward, nextCursor);
+  }
+
+  /**
+   * Reapplies one durable history entry.
+   */
+  public redo(): BoardRevision {
+    if (!this.canRedo()) {
+      return this.revision;
+    }
+
+    const nextCursor = this.historyCursor + 1;
+    const entry = this.history[nextCursor];
+    return this.applyHistoryDeltas(entry.forward, nextCursor);
+  }
+
+  /**
    * Returns all committed deltas after the provided revision.
    */
   public getDeltasSince(revision: BoardRevision): BoardDeltaBatch {
@@ -914,12 +1082,158 @@ export class BoardEngine {
     this.state = nextState;
     const envelope: BoardDeltaEnvelope = {
       revision: this.revision,
-      deltas
+      deltas: cloneDeltas(deltas)
     };
     this.deltaHistory.push(envelope);
+    this.recordHistoryFromCommit(deltas);
     this.notifyListeners(envelope);
 
     return this.revision;
+  }
+
+  private recordHistoryFromCommit(deltas: BoardDelta[]) {
+    const durableDeltas = deltas.filter((delta) => isDurableHistoryDelta(delta));
+    if (durableDeltas.length === 0) {
+      return;
+    }
+
+    this.linearizeRedoTailIfNeeded();
+    this.history.push({
+      forward: cloneDeltas(durableDeltas),
+      backward: invertDeltas(durableDeltas),
+      meta: {
+        kind: 'user'
+      }
+    });
+    this.historyCursor = this.history.length - 1;
+  }
+
+  private linearizeRedoTailIfNeeded() {
+    if (!this.canRedo()) {
+      return;
+    }
+
+    const redoTail = this.history
+      .slice(this.historyCursor + 1)
+      .map((entry) => this.cloneHistoryEntry(entry));
+    if (redoTail.length === 0) {
+      return;
+    }
+
+    this.syntheticHistoryGroupSequence += 1;
+    const groupId = `g-${this.syntheticHistoryGroupSequence}`;
+    const linearized: BoardHistoryEntry[] = [...redoTail].reverse().map((entry) => ({
+      forward: cloneDeltas(entry.backward),
+      backward: cloneDeltas(entry.forward),
+      meta: {
+        kind: 'synthetic' as const,
+        groupId
+      }
+    }));
+
+    this.history.push(...linearized);
+    this.historyCursor = this.history.length - 1;
+  }
+
+  private cloneHistoryEntry(entry: BoardHistoryEntry): BoardHistoryEntry {
+    return {
+      forward: cloneDeltas(entry.forward),
+      backward: cloneDeltas(entry.backward),
+      meta: {
+        kind: entry.meta.kind,
+        groupId: entry.meta.groupId
+      }
+    };
+  }
+
+  private applyHistoryDeltas(deltas: BoardDelta[], nextCursor: number): BoardRevision {
+    if (deltas.length === 0) {
+      this.historyCursor = nextCursor;
+      return this.revision;
+    }
+
+    const nextState = cloneState(this.state);
+    deltas.forEach((delta) => {
+      this.applyDelta(nextState, delta);
+    });
+
+    this.revision += 1;
+    this.state = nextState;
+    this.historyCursor = nextCursor;
+    const envelope: BoardDeltaEnvelope = {
+      revision: this.revision,
+      deltas: cloneDeltas(deltas)
+    };
+    this.deltaHistory.push(envelope);
+    this.notifyListeners(envelope);
+    return this.revision;
+  }
+
+  private applyDelta(state: BoardState, delta: BoardDelta) {
+    if (delta.type === 'element_added') {
+      this.elementRegistry.assertKnownKind(delta.element.kind);
+      const id = delta.element.id;
+      const existingIndex = state.elementOrder.indexOf(id);
+      if (existingIndex !== -1) {
+        state.elementOrder.splice(existingIndex, 1);
+      }
+      state.elements[id] = cloneElement(delta.element);
+      state.elementOrder.splice(
+        normalizeInsertionIndex(delta.index, state.elementOrder.length),
+        0,
+        id
+      );
+      return;
+    }
+
+    if (delta.type === 'element_removed') {
+      const id = delta.element.id;
+      delete state.elements[id];
+      const index = state.elementOrder.indexOf(id);
+      if (index !== -1) {
+        state.elementOrder.splice(index, 1);
+      }
+      state.selection = state.selection.filter((selectionId) => selectionId !== id);
+      return;
+    }
+
+    if (delta.type === 'element_updated') {
+      const id = delta.id;
+      this.elementRegistry.assertKnownKind(delta.current.kind);
+      state.elements[id] = cloneElement(delta.current);
+      if (typeof delta.currentIndex === 'number') {
+        const existingIndex = state.elementOrder.indexOf(id);
+        if (existingIndex !== -1) {
+          state.elementOrder.splice(existingIndex, 1);
+        }
+        state.elementOrder.splice(
+          normalizeInsertionIndex(delta.currentIndex, state.elementOrder.length),
+          0,
+          id
+        );
+      } else if (!state.elementOrder.includes(id)) {
+        state.elementOrder.push(id);
+      }
+      return;
+    }
+
+    if (delta.type === 'selection_changed') {
+      state.selection = normalizeElementIds(delta.current, state);
+      return;
+    }
+
+    if (delta.type === 'viewport_changed') {
+      state.viewport = {
+        ...delta.current
+      };
+      return;
+    }
+
+    if (delta.current.mode === 'idle') {
+      state.interaction = {
+        mode: 'idle'
+      };
+    }
   }
 
   /** Notifies subscribers after a revision commit. */
@@ -1400,6 +1714,104 @@ if (import.meta.vitest) {
           ]
         }
       });
+    });
+
+    it('undoes and redoes durable mutations', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.select({
+        ids: ['note-1']
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 15, y: -5 }
+      });
+
+      expect(engine.getState().elements['note-1'].x).toBe(25);
+      expect(engine.getState().elements['note-1'].y).toBe(15);
+      expect(engine.canUndo()).toBe(true);
+      expect(engine.canRedo()).toBe(false);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(10);
+      expect(engine.getState().elements['note-1'].y).toBe(20);
+      expect(engine.canRedo()).toBe(true);
+
+      engine.redo();
+      expect(engine.getState().elements['note-1'].x).toBe(25);
+      expect(engine.getState().elements['note-1'].y).toBe(15);
+    });
+
+    it('preserves undone future states after branching edits', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.select({
+        ids: ['note-1']
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 10, y: 0 }
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 10, y: 0 }
+      });
+      expect(engine.getState().elements['note-1'].x).toBe(30);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(20);
+
+      engine.dispatch.moveSelection({
+        delta: { x: 5, y: 0 }
+      });
+      expect(engine.getState().elements['note-1'].x).toBe(25);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(20);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(30);
+
+      engine.undo();
+      expect(engine.getState().elements['note-1'].x).toBe(20);
+    });
+
+    it('handles keyboard undo and redo accelerators', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.select({
+        ids: ['note-1']
+      });
+      engine.dispatch.moveSelection({
+        delta: { x: 10, y: 0 }
+      });
+
+      engine.handleKeyboard({
+        type: 'keyboard',
+        phase: 'down',
+        key: 'z',
+        code: 'KeyZ',
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false
+      });
+      expect(engine.getState().elements['note-1'].x).toBe(10);
+
+      engine.handleKeyboard({
+        type: 'keyboard',
+        phase: 'down',
+        key: 'y',
+        code: 'KeyY',
+        shiftKey: false,
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false
+      });
+      expect(engine.getState().elements['note-1'].x).toBe(20);
     });
 
     it('rejects unknown kinds during initialization', () => {

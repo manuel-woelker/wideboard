@@ -934,6 +934,61 @@ describe('BoardComponent', () => {
     expect(document.querySelector('[data-element-id="test-image"]')).toBeInTheDocument();
   });
 
+  it('undoes and redoes board mutations from keyboard shortcuts', () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
+
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    engine.dispatch.select({
+      ids: ['test-note']
+    });
+    engine.dispatch.moveSelection({
+      delta: { x: 40, y: 0 }
+    });
+
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    expect(noteNode.style.left).toBe('50px');
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(noteNode.style.left).toBe('10px');
+
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    expect(noteNode.style.left).toBe('50px');
+  });
+
+  it('does not apply undo shortcut while editing note text', () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
+
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    engine.dispatch.select({
+      ids: ['test-note']
+    });
+    engine.dispatch.moveSelection({
+      delta: { x: 30, y: 0 }
+    });
+
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+    editor.setAttribute('contenteditable', 'true');
+    editor.focus();
+
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    expect(noteNode.style.left).toBe('40px');
+
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true });
+    expect(noteNode.style.left).toBe('40px');
+  });
+
   it('does not delete selected notes while editing note text', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
 

@@ -1,5 +1,6 @@
 import { Global, css } from '@emotion/react';
 import styled from '@emotion/styled';
+import { useEffect } from 'react';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
 import elephantImage from '../assets/elephant.jpg';
 
@@ -89,6 +90,10 @@ const OverlayTitle = styled.h1`
 `;
 
 export function App() {
+  useEffect(() => {
+    document.title = DEFAULT_BOARD.name;
+  }, []);
+
   return (
     <Shell>
       <Global

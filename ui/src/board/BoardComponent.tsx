@@ -203,6 +203,13 @@ class BoardRenderer {
       if (element.kind !== 'note' || !record.note) {
         return;
       }
+      const isActivelyEditing = record.note.editor.isContentEditable;
+      if (
+        record.note.editor.textContent !== element.text &&
+        (!isActivelyEditing || document.activeElement !== record.note.editor)
+      ) {
+        record.note.editor.textContent = element.text;
+      }
       record.note.model = element;
       return;
     }

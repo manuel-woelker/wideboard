@@ -318,6 +318,47 @@ function getTranslationDeltaSignature(deltas: BoardDelta[]) {
   return [...ids].sort().join('|');
 }
 
+function isPureNoteTextUpdate(delta: BoardDelta) {
+  if (delta.type !== 'element_updated') {
+    return false;
+  }
+
+  if (delta.previous.kind !== 'note' || delta.current.kind !== 'note') {
+    return false;
+  }
+
+  if (
+    typeof delta.previousIndex === 'number' &&
+    typeof delta.currentIndex === 'number' &&
+    delta.previousIndex !== delta.currentIndex
+  ) {
+    return false;
+  }
+
+  return (
+    delta.previous.id === delta.current.id &&
+    delta.previous.x === delta.current.x &&
+    delta.previous.y === delta.current.y &&
+    delta.previous.width === delta.current.width &&
+    delta.previous.height === delta.current.height &&
+    delta.previous.text !== delta.current.text
+  );
+}
+
+function getNoteTextDeltaSignature(deltas: BoardDelta[]) {
+  if (deltas.length === 0 || !deltas.every((delta) => isPureNoteTextUpdate(delta))) {
+    return null;
+  }
+
+  const ids = deltas.map((delta) => (delta.type === 'element_updated' ? delta.id : ''));
+  const uniqueIds = new Set(ids);
+  if (uniqueIds.size !== ids.length) {
+    return null;
+  }
+
+  return [...ids].sort().join('|');
+}
+
 /**
  * Strictly-typed command dispatch proxy API (`dispatch.<type>(payload)`).
  */
@@ -1139,7 +1180,9 @@ export class BoardEngine {
     };
     const previousEntry = this.history[this.history.length - 1];
     if (previousEntry && previousEntry.meta.kind === 'user') {
-      const coalesced = this.tryCoalesceConsecutiveMoveEntries(previousEntry, nextEntry);
+      const coalesced =
+        this.tryCoalesceConsecutiveMoveEntries(previousEntry, nextEntry) ??
+        this.tryCoalesceConsecutiveNoteTextEntries(previousEntry, nextEntry);
       if (coalesced) {
         this.history[this.history.length - 1] = coalesced;
         this.historyCursor = this.history.length - 1;
@@ -1157,6 +1200,54 @@ export class BoardEngine {
   ): BoardHistoryEntry | null {
     const previousSignature = getTranslationDeltaSignature(previousEntry.forward);
     const nextSignature = getTranslationDeltaSignature(nextEntry.forward);
+    if (!previousSignature || !nextSignature || previousSignature !== nextSignature) {
+      return null;
+    }
+
+    const previousById = new Map<string, Extract<BoardDelta, { type: 'element_updated' }>>();
+    previousEntry.forward.forEach((delta) => {
+      if (delta.type === 'element_updated') {
+        previousById.set(delta.id, delta);
+      }
+    });
+
+    const nextById = new Map<string, Extract<BoardDelta, { type: 'element_updated' }>>();
+    nextEntry.forward.forEach((delta) => {
+      if (delta.type === 'element_updated') {
+        nextById.set(delta.id, delta);
+      }
+    });
+
+    const mergedForward: BoardDelta[] = [];
+    for (const [id, previous] of previousById) {
+      const next = nextById.get(id);
+      if (!next) {
+        return null;
+      }
+
+      mergedForward.push({
+        type: 'element_updated',
+        id,
+        previous: cloneElement(previous.previous),
+        current: cloneElement(next.current)
+      });
+    }
+
+    return {
+      forward: mergedForward,
+      backward: invertDeltas(mergedForward),
+      meta: {
+        kind: 'user'
+      }
+    };
+  }
+
+  private tryCoalesceConsecutiveNoteTextEntries(
+    previousEntry: BoardHistoryEntry,
+    nextEntry: BoardHistoryEntry
+  ): BoardHistoryEntry | null {
+    const previousSignature = getNoteTextDeltaSignature(previousEntry.forward);
+    const nextSignature = getNoteTextDeltaSignature(nextEntry.forward);
     if (!previousSignature || !nextSignature || previousSignature !== nextSignature) {
       return null;
     }
@@ -1855,6 +1946,56 @@ if (import.meta.vitest) {
 
       engine.redo();
       expect(engine.getState().elements['note-1'].x).toBe(25);
+    });
+
+    it('coalesces consecutive note text commits into one undo step', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      const firstPass = engine.getState().elementOrder.map((id) => {
+        const element = engine.getState().elements[id];
+        if (element.id !== 'note-1' || element.kind !== 'note') {
+          return element;
+        }
+        return {
+          ...element,
+          text: 'Hello!'
+        };
+      });
+      engine.dispatch.setElements({
+        elements: firstPass
+      });
+
+      const secondPass = engine.getState().elementOrder.map((id) => {
+        const element = engine.getState().elements[id];
+        if (element.id !== 'note-1' || element.kind !== 'note') {
+          return element;
+        }
+        return {
+          ...element,
+          text: 'Hello!!'
+        };
+      });
+      engine.dispatch.setElements({
+        elements: secondPass
+      });
+      expect(engine.getState().elements['note-1']).toMatchObject({
+        kind: 'note',
+        text: 'Hello!!'
+      });
+
+      engine.undo();
+      expect(engine.getState().elements['note-1']).toMatchObject({
+        kind: 'note',
+        text: 'Hello'
+      });
+
+      engine.redo();
+      expect(engine.getState().elements['note-1']).toMatchObject({
+        kind: 'note',
+        text: 'Hello!!'
+      });
     });
 
     it('preserves undone future states after branching edits', () => {

@@ -960,6 +960,30 @@ describe('BoardComponent', () => {
     expect(noteNode.style.left).toBe('50px');
   });
 
+  it('undoes coalesced note text edits in one step', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const noteNode = document.querySelector('[data-element-id="test-note"]') as HTMLDivElement;
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+
+    fireEvent.doubleClick(noteNode);
+    expect(editor.contentEditable).toBe('true');
+
+    editor.textContent = 'Test note A';
+    fireEvent.input(editor);
+    editor.textContent = 'Test note AB';
+    fireEvent.input(editor);
+    editor.blur();
+    editor.setAttribute('contenteditable', 'false');
+
+    expect(editor.textContent).toBe('Test note AB');
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(editor.textContent).toBe('Test note');
+  });
+
   it('does not apply undo shortcut while editing note text', () => {
     const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
     render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);

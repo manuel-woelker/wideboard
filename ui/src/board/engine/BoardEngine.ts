@@ -165,6 +165,20 @@ type CommandHandler<TType extends CommandType> = (
 type CommandHandlerMap = {
   [TType in CommandType]: CommandHandler<TType>;
 };
+type CommandPayload<TType extends CommandType> = Omit<
+  Extract<BoardCommand, { type: TType }>,
+  'type'
+>;
+type DispatchMethod<TType extends CommandType> = keyof CommandPayload<TType> extends never
+  ? (payload?: CommandPayload<TType>) => BoardRevision
+  : (payload: CommandPayload<TType>) => BoardRevision;
+
+/**
+ * Strictly-typed command dispatch proxy API (`dispatch.<type>(payload)`).
+ */
+export type BoardEngineDispatchProxy = {
+  [TType in CommandType]: DispatchMethod<TType>;
+};
 
 /**
  * Engine update payload emitted after each committed state mutation.
@@ -200,11 +214,14 @@ export class BoardEngine {
   private readonly listeners = new Set<BoardEngineListener>();
   /** Command dispatch table mapped by command type. */
   private readonly commandHandlers: CommandHandlerMap;
+  /** Strict dispatch proxy for ergonomic command invocation. */
+  public readonly dispatch: BoardEngineDispatchProxy;
 
   public constructor(config: BoardEngineConfig = {}) {
     this.elementRegistry = config.elementRegistry ?? createDefaultBoardElementRegistry();
     this.state = createInitialState(config, this.elementRegistry);
     this.commandHandlers = this.createCommandHandlers();
+    this.dispatch = this.createDispatchProxy();
   }
 
   /**
@@ -352,50 +369,43 @@ export class BoardEngine {
     }
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
-      return this.dispatch({
-        type: 'remove_elements',
+      return this.dispatch.remove_elements({
         ids: this.state.selection
       });
     }
 
     if (event.key === 'ArrowLeft') {
-      return this.dispatch({
-        type: 'move_selection',
+      return this.dispatch.move_selection({
         delta: { x: -KEYBOARD_MOVE_STEP, y: 0 }
       });
     }
 
     if (event.key === 'ArrowRight') {
-      return this.dispatch({
-        type: 'move_selection',
+      return this.dispatch.move_selection({
         delta: { x: KEYBOARD_MOVE_STEP, y: 0 }
       });
     }
 
     if (event.key === 'ArrowUp') {
-      return this.dispatch({
-        type: 'move_selection',
+      return this.dispatch.move_selection({
         delta: { x: 0, y: -KEYBOARD_MOVE_STEP }
       });
     }
 
     if (event.key === 'ArrowDown') {
-      return this.dispatch({
-        type: 'move_selection',
+      return this.dispatch.move_selection({
         delta: { x: 0, y: KEYBOARD_MOVE_STEP }
       });
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === ']') {
-      return this.dispatch({
-        type: 'order_selection',
+      return this.dispatch.order_selection({
         action: 'bring_forward'
       });
     }
 
     if ((event.ctrlKey || event.metaKey) && event.key === '[') {
-      return this.dispatch({
-        type: 'order_selection',
+      return this.dispatch.order_selection({
         action: 'send_backward'
       });
     }
@@ -415,8 +425,7 @@ export class BoardEngine {
    */
   public handleWheel(event: BoardWheelEvent): BoardRevision {
     const zoomFactor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
-    return this.dispatch({
-      type: 'zoom_viewport',
+    return this.dispatch.zoom_viewport({
       zoom: this.state.viewport.zoom * zoomFactor,
       anchor: event.point
     });
@@ -451,10 +460,30 @@ export class BoardEngine {
   /**
    * Applies a board command and records deltas/revision when state changes.
    */
-  public dispatch(command: BoardCommand): BoardRevision {
+  public execute(command: BoardCommand): BoardRevision {
     return this.commit((state, deltas) => {
       const handler = this.commandHandlers[command.type] as CommandHandler<CommandType>;
       handler(state, deltas, command as Extract<BoardCommand, { type: CommandType }>);
+    });
+  }
+
+  /** Builds the strict `dispatch.<type>(payload)` proxy. */
+  private createDispatchProxy(): BoardEngineDispatchProxy {
+    return new Proxy({} as BoardEngineDispatchProxy, {
+      get: (_target, property) => {
+        if (typeof property !== 'string' || !(property in this.commandHandlers)) {
+          throw new Error(`Unknown board command "${String(property)}"`);
+        }
+
+        const commandType = property as CommandType;
+        return (payload?: unknown) => {
+          const command = {
+            type: commandType,
+            ...((payload ?? {}) as object)
+          } as Extract<BoardCommand, { type: CommandType }>;
+          return this.execute(command);
+        };
+      }
     });
   }
 
@@ -948,12 +977,10 @@ if (import.meta.vitest) {
         initialElements: testElements
       });
 
-      const revision1 = engine.dispatch({
-        type: 'select',
+      const revision1 = engine.dispatch.select({
         ids: ['note-1']
       });
-      const revision2 = engine.dispatch({
-        type: 'move_selection',
+      const revision2 = engine.dispatch.move_selection({
         delta: { x: 15, y: -5 }
       });
 
@@ -1028,8 +1055,7 @@ if (import.meta.vitest) {
         deltaX: 0,
         deltaY: -120
       });
-      engine.dispatch({
-        type: 'pan_viewport',
+      engine.dispatch.pan_viewport({
         delta: { x: 20, y: -10 }
       });
 
@@ -1049,12 +1075,10 @@ if (import.meta.vitest) {
         initialElements: testElements
       });
 
-      engine.dispatch({
-        type: 'select',
+      engine.dispatch.select({
         ids: ['note-1']
       });
-      engine.dispatch({
-        type: 'order_selection',
+      engine.dispatch.order_selection({
         action: 'bring_to_front'
       });
 
@@ -1068,8 +1092,7 @@ if (import.meta.vitest) {
         initialElements: testElements
       });
 
-      engine.dispatch({
-        type: 'select',
+      engine.dispatch.select({
         ids: ['note-1']
       });
       engine.handleKeyboard({
@@ -1110,8 +1133,7 @@ if (import.meta.vitest) {
       });
 
       expect(() => {
-        engine.dispatch({
-          type: 'add_element',
+        engine.dispatch.add_element({
           element: {
             id: 'unknown-1',
             kind: 'sticker',

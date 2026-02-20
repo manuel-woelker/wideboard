@@ -279,14 +279,12 @@ if (import.meta.vitest) {
 
       const actual = harness.test({
         arrange: (engine) => {
-          engine.dispatch({
-            type: 'select',
+          engine.dispatch.select({
             ids: ['note-1']
           });
         },
         act: (engine) => {
-          engine.dispatch({
-            type: 'move_selection',
+          engine.dispatch.move_selection({
             delta: { x: 5, y: -2 }
           });
         },

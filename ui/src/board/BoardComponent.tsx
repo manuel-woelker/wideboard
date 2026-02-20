@@ -152,7 +152,7 @@ class BoardRenderer {
   }
 
   private dispatchAndSync(command: BoardCommand, options: { resetEditing?: boolean } = {}) {
-    this.runEngineMutation(() => this.engine.dispatch(command), options);
+    this.runEngineMutation(() => this.engine.execute(command), options);
   }
 
   private runEngineMutation(

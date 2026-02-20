@@ -1,13 +1,6 @@
 import { BoardEngine, type BoardEngineUpdate } from './BoardEngine';
 import type { BoardDelta } from './boardDeltas';
 import type { BoardEngineConfig, BoardState } from './boardEngineTypes';
-import type {
-  BoardClipboardEvent,
-  BoardCommand,
-  BoardKeyboardEvent,
-  BoardPointerEvent,
-  BoardWheelEvent
-} from './boardEvents';
 
 /**
  * One normalized state diff entry used by harness snapshot assertions.
@@ -44,25 +37,15 @@ export interface BoardEngineHarnessExpectedSnapshots {
 }
 
 /**
- * Context object passed to arrange/act phases.
+ * Required phases for one harness test execution.
  */
-export interface BoardEngineHarnessPhaseContext {
-  /** Underlying engine instance for advanced assertions/custom calls. */
-  engine: BoardEngine;
-  /** Dispatches a command through the engine command reducer path. */
-  dispatch: (command: BoardCommand) => number;
-  /** Routes pointer events through the engine interaction reducer path. */
-  handlePointer: (event: BoardPointerEvent) => number;
-  /** Routes keyboard events through the engine keyboard reducer path. */
-  handleKeyboard: (event: BoardKeyboardEvent) => number;
-  /** Routes wheel events through the engine viewport reducer path. */
-  handleWheel: (event: BoardWheelEvent) => number;
-  /** Routes clipboard events through the engine clipboard reducer path. */
-  handleClipboard: (event: BoardClipboardEvent) => number;
-  /** Reads the current state snapshot. */
-  getState: () => Readonly<BoardState>;
-  /** Reads the current engine revision. */
-  getRevision: () => number;
+export interface BoardEngineHarnessTestDefinition {
+  /** Arrange phase: prepare state and define the assert baseline. */
+  arrange: (engine: BoardEngine) => void;
+  /** Act phase: run behavior under test. */
+  act: (engine: BoardEngine) => void;
+  /** Assert phase expected snapshots. */
+  assert: BoardEngineHarnessExpectedSnapshots;
 }
 
 /**
@@ -210,7 +193,6 @@ function assertSnapshotEquals(label: string, actual: unknown, expected: unknown)
  */
 export class BoardEngineTestHarness {
   private readonly engine: BoardEngine;
-  private readonly phaseContext: BoardEngineHarnessPhaseContext;
   private arrangeBaselineState: BoardState;
   private readonly allUpdates: BoardEngineUpdate[] = [];
   private actPhaseUpdateStart = 0;
@@ -218,16 +200,6 @@ export class BoardEngineTestHarness {
   public constructor(config: BoardEngineConfig = {}) {
     this.engine = new BoardEngine(config);
     this.arrangeBaselineState = toPlainSnapshot(this.engine.getState());
-    this.phaseContext = {
-      engine: this.engine,
-      dispatch: (command) => this.engine.dispatch(command),
-      handlePointer: (event) => this.engine.handlePointer(event),
-      handleKeyboard: (event) => this.engine.handleKeyboard(event),
-      handleWheel: (event) => this.engine.handleWheel(event),
-      handleClipboard: (event) => this.engine.handleClipboard(event),
-      getState: () => this.engine.getState(),
-      getRevision: () => this.engine.getRevision()
-    };
 
     this.engine.subscribe((update) => {
       this.allUpdates.push(toPlainSnapshot(update));
@@ -235,30 +207,16 @@ export class BoardEngineTestHarness {
   }
 
   /**
-   * Arrange phase: prepare state and mark the assertion baseline.
+   * Runs a full Arrange -> Act -> Assert cycle with required phase fields.
    */
-  public arrange(step: (context: BoardEngineHarnessPhaseContext) => void): this {
-    step(this.phaseContext);
+  public test(definition: BoardEngineHarnessTestDefinition): BoardEngineHarnessActualSnapshots {
+    definition.arrange(this.engine);
     this.arrangeBaselineState = toPlainSnapshot(this.engine.getState());
     this.actPhaseUpdateStart = this.allUpdates.length;
-    return this;
-  }
-
-  /**
-   * Act phase: execute behavior under test and capture emitted updates.
-   */
-  public act(step: (context: BoardEngineHarnessPhaseContext) => void): this {
-    step(this.phaseContext);
-    return this;
-  }
-
-  /**
-   * Assert phase: compare emitted update and state-diff snapshots.
-   */
-  public assert(expected: BoardEngineHarnessExpectedSnapshots): BoardEngineHarnessActualSnapshots {
+    definition.act(this.engine);
     const actual = this.captureSnapshots();
-    assertSnapshotEquals('events', actual.events, expected.events);
-    assertSnapshotEquals('stateDiff', actual.stateDiff, expected.stateDiff);
+    assertSnapshotEquals('events', actual.events, definition.assert.events);
+    assertSnapshotEquals('stateDiff', actual.stateDiff, definition.assert.stateDiff);
     return actual;
   }
 
@@ -313,25 +271,25 @@ if (import.meta.vitest) {
   ];
 
   describe('BoardEngineTestHarness', () => {
-    it('asserts emitted events and state diff snapshots across arrange/act phases', () => {
+    it('requires arrange, act and assert phases through a single test definition', () => {
       const harness = createBoardEngineTestHarness({
         initialElements
       });
 
-      const actual = harness
-        .arrange(({ dispatch }) => {
-          dispatch({
+      const actual = harness.test({
+        arrange: (engine) => {
+          engine.dispatch({
             type: 'select',
             ids: ['note-1']
           });
-        })
-        .act(({ dispatch }) => {
-          dispatch({
+        },
+        act: (engine) => {
+          engine.dispatch({
             type: 'move_selection',
             delta: { x: 5, y: -2 }
           });
-        })
-        .assert({
+        },
+        assert: {
           events: [
             {
               revision: 2,
@@ -375,7 +333,8 @@ if (import.meta.vitest) {
               after: 18
             }
           ]
-        });
+        }
+      });
 
       expect(actual.events).toHaveLength(1);
       expect(actual.stateDiff).toHaveLength(2);

@@ -13,6 +13,8 @@ import { createImageRecord, type ImageElement, type ImageRecord } from './imageE
 import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
 import { WIDEBOARD_NOTE_CLIPBOARD_MIME } from './engine/boardEvents';
 import type { BoardElement, BoardImageElement, BoardNoteElement } from './engine/boardEngineTypes';
+import { BoardEngine } from './engine/BoardEngine';
+import type { BoardCommand } from './engine/boardEvents';
 export type { BoardElement, BoardImageElement as ImageElement, BoardNoteElement as NoteElement };
 
 export interface BoardComponentProps {
@@ -31,9 +33,6 @@ const DEFAULT_IMAGE_SIZE: MinimumSize = {
 const IMAGE_INSERT_OFFSET = 24;
 
 const GRID_SIZE = 38;
-const MIN_ZOOM = 0.4;
-const MAX_ZOOM = 2.5;
-const ZOOM_SENSITIVITY = 0.0015;
 
 const DEFAULT_ELEMENT: NoteElement = {
   id: 'note-1',
@@ -57,10 +56,9 @@ interface BoardRecord {
 
 class BoardRenderer {
   private readonly host: HTMLDivElement;
+  private readonly engine: BoardEngine;
 
   private readonly records = new Map<string, BoardRecord>();
-
-  private readonly selectedNoteIds = new Set<string>();
 
   private activeNoteId: string | null = null;
 
@@ -84,6 +82,9 @@ class BoardRenderer {
 
   public constructor(host: HTMLDivElement, initialElements: BoardElement[]) {
     this.host = host;
+    this.engine = new BoardEngine({
+      initialElements
+    });
     this.host.style.position = 'relative';
     this.host.style.width = '100%';
     this.host.style.height = '100%';
@@ -118,14 +119,6 @@ class BoardRenderer {
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
     this.imageSequence = this.deriveInitialImageSequence(initialElements);
 
-    initialElements.forEach((element) => {
-      if (element.kind === 'note') {
-        this.createNote(element);
-      } else if (element.kind === 'image') {
-        this.createImage(element);
-      }
-    });
-
     this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.addEventListener('wheel', this.handleZoom, { passive: false });
     this.host.addEventListener('contextmenu', this.handleContextMenu);
@@ -134,6 +127,97 @@ class BoardRenderer {
     this.host.addEventListener('dragover', this.handleDragOver);
     this.host.addEventListener('drop', this.handleDrop);
     window.addEventListener('keydown', this.handleKeyDown);
+
+    const firstElementId = this.engine.getState().elementOrder[0];
+    if (firstElementId) {
+      this.engine.dispatch({
+        type: 'select',
+        ids: [firstElementId]
+      });
+    }
+    this.syncFromEngineState();
+  }
+
+  private dispatchAndSync(command: BoardCommand, options: { resetEditing?: boolean } = {}) {
+    this.engine.dispatch(command);
+    this.syncFromEngineState(options);
+  }
+
+  private getEngineElementsInOrder() {
+    const state = this.engine.getState();
+    return state.elementOrder.map((id) => state.elements[id]);
+  }
+
+  private syncFromEngineState(options: { resetEditing?: boolean } = {}) {
+    const state = this.engine.getState();
+    this.panOffset = {
+      x: state.viewport.panX,
+      y: state.viewport.panY
+    };
+    this.zoom = state.viewport.zoom;
+    const knownIds = new Set(state.elementOrder);
+
+    this.records.forEach((record, id) => {
+      if (knownIds.has(id)) {
+        return;
+      }
+
+      record.node.remove();
+      this.records.delete(id);
+    });
+
+    state.elementOrder.forEach((id) => {
+      const element = state.elements[id];
+      const existing = this.records.get(id);
+      if (!existing) {
+        if (element.kind === 'note') {
+          this.createNote(element);
+        } else {
+          this.createImage(element);
+        }
+        return;
+      }
+
+      existing.setModel(element);
+      this.applyFrameWithPan(existing.node, element);
+      existing.scheduleAutoFit();
+      this.host.append(existing.node);
+    });
+
+    this.setSelectionStyles(state.selection, this.activeNoteId, options.resetEditing ?? false);
+    this.refreshAllLayouts();
+  }
+
+  private setSelectionStyles(
+    noteIdList: string[],
+    preferredActiveNoteId: string | null = null,
+    resetEditing = true
+  ) {
+    const selectedNoteIds = new Set<string>();
+    noteIdList.forEach((noteId) => {
+      if (this.records.has(noteId)) {
+        selectedNoteIds.add(noteId);
+      }
+    });
+
+    if (preferredActiveNoteId && selectedNoteIds.has(preferredActiveNoteId)) {
+      this.activeNoteId = preferredActiveNoteId;
+    } else if (this.activeNoteId && selectedNoteIds.has(this.activeNoteId)) {
+      this.activeNoteId = this.activeNoteId;
+    } else {
+      this.activeNoteId = selectedNoteIds.values().next().value ?? null;
+    }
+
+    this.records.forEach((record, recordId) => {
+      const isSelected = selectedNoteIds.has(recordId);
+
+      record.node.dataset.selected = isSelected ? 'true' : 'false';
+      record.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
+      record.node.style.outlineOffset = isSelected ? '0px' : '';
+      if (resetEditing) {
+        record.note?.setEditingEnabled(false);
+      }
+    });
   }
 
   public destroy() {
@@ -159,10 +243,12 @@ class BoardRenderer {
       height: 170,
       text: 'New note'
     };
-    const created = this.createNote(createdElement);
-
-    this.selectSingleNote(createdElement.id);
-    created.note?.editor.focus();
+    this.dispatchAndSync({
+      type: 'add_element',
+      element: createdElement
+    });
+    this.setSelection([createdElement.id], createdElement.id);
+    this.records.get(createdElement.id)?.note?.editor.focus();
   }
 
   public clearActiveNote() {
@@ -284,7 +370,7 @@ class BoardRenderer {
   }
 
   private generateNoteId() {
-    while (this.records.has(`note-${this.noteSequence}`)) {
+    while (this.engine.getState().elements[`note-${this.noteSequence}`]) {
       this.noteSequence += 1;
     }
 
@@ -294,7 +380,7 @@ class BoardRenderer {
   }
 
   private generateImageId() {
-    while (this.records.has(`image-${this.imageSequence}`)) {
+    while (this.engine.getState().elements[`image-${this.imageSequence}`]) {
       this.imageSequence += 1;
     }
 
@@ -326,6 +412,7 @@ class BoardRenderer {
   }
 
   private refreshAllLayouts() {
+    this.updatePanBackground();
     this.records.forEach((record) => {
       this.applyFrameWithPan(record.node, record.getModel());
     });
@@ -387,21 +474,6 @@ class BoardRenderer {
     return this.isTextEditingElement(document.activeElement);
   }
 
-  private deleteSelectedElements() {
-    const selectedIds = Array.from(this.selectedNoteIds);
-    selectedIds.forEach((id) => {
-      const record = this.records.get(id);
-      if (!record) {
-        return;
-      }
-
-      record.node.remove();
-      this.records.delete(id);
-    });
-
-    this.setSelection([]);
-  }
-
   private getActiveNoteRecord(): NoteRecord | null {
     if (!this.activeNoteId) {
       return null;
@@ -416,7 +488,7 @@ class BoardRenderer {
   }
 
   private getSelectedRecords() {
-    return Array.from(this.selectedNoteIds)
+    return Array.from(this.engine.getState().selection)
       .map((noteId) => this.records.get(noteId))
       .filter((record): record is BoardRecord => Boolean(record));
   }
@@ -462,10 +534,11 @@ class BoardRenderer {
       return;
     }
 
-    if (!this.selectedNoteIds.has(noteId)) {
+    const currentSelection = this.engine.getState().selection;
+    if (!currentSelection.includes(noteId)) {
       this.selectSingleNote(noteId);
     } else {
-      this.setSelection(Array.from(this.selectedNoteIds), noteId);
+      this.setSelection(currentSelection, noteId);
     }
 
     const selected = this.getSelectedRecords();
@@ -474,18 +547,9 @@ class BoardRenderer {
     }
 
     const origin = { x: event.clientX, y: event.clientY };
-    const startingFrames = new Map(
-      selected.map((record) => [
-        record.getModel().id,
-        {
-          x: record.getModel().x,
-          y: record.getModel().y,
-          width: record.getModel().width,
-          height: record.getModel().height
-        }
-      ])
-    );
     let hasStartedDrag = false;
+    let appliedDelta: PointerDelta = { x: 0, y: 0 };
+    const selectedIds = selected.map((record) => record.getModel().id);
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const rawDelta: PointerDelta = {
@@ -509,19 +573,15 @@ class BoardRenderer {
         y: rawDelta.y / this.zoom
       };
 
-      selected.forEach((record) => {
-        const current = record.getModel();
-        const frame = startingFrames.get(current.id);
-        if (!frame) {
-          return;
-        }
-
-        record.setModel({
-          ...current,
-          x: frame.x + delta.x,
-          y: frame.y + delta.y
-        });
-        this.applyFrameWithPan(record.node, record.getModel());
+      const stepDelta = {
+        x: delta.x - appliedDelta.x,
+        y: delta.y - appliedDelta.y
+      };
+      appliedDelta = delta;
+      this.dispatchAndSync({
+        type: 'move_elements',
+        ids: selectedIds,
+        delta: stepDelta
       });
 
       this.refreshSelectionFrame();
@@ -591,6 +651,7 @@ class BoardRenderer {
       });
       const scaleX = nextBounds.width / startBounds.width;
       const scaleY = nextBounds.height / startBounds.height;
+      const nextById = new Map<string, BoardElement>();
 
       selected.forEach((record) => {
         const current = record.getModel();
@@ -599,17 +660,22 @@ class BoardRenderer {
           return;
         }
 
-        record.setModel({
+        nextById.set(current.id, {
           ...current,
           x: nextBounds.x + (frame.x - startBounds.x) * scaleX,
           y: nextBounds.y + (frame.y - startBounds.y) * scaleY,
           width: frame.width * scaleX,
           height: frame.height * scaleY
         });
-
-        this.applyFrameWithPan(record.node, record.getModel());
-        record.scheduleAutoFit();
       });
+      const nextElements = this.getEngineElementsInOrder().map((element) => {
+        return nextById.get(element.id) ?? element;
+      });
+      this.dispatchAndSync({
+        type: 'set_elements',
+        elements: nextElements
+      });
+      selected.forEach((record) => record.scheduleAutoFit());
 
       this.refreshSelectionFrame();
     };
@@ -702,7 +768,10 @@ class BoardRenderer {
         alt: file.name || 'Pasted image'
       };
 
-      this.createImage(element);
+      this.dispatchAndSync({
+        type: 'add_element',
+        element
+      });
       createdIds.push(element.id);
     });
 
@@ -807,10 +876,12 @@ class BoardRenderer {
       height: source.height,
       text: source.text
     };
-    const created = this.createNote(createdElement);
-
+    this.dispatchAndSync({
+      type: 'add_element',
+      element: createdElement
+    });
     this.selectSingleNote(createdElement.id);
-    created.note?.editor.focus();
+    this.records.get(createdElement.id)?.note?.editor.focus();
     event.preventDefault();
   };
 
@@ -859,12 +930,22 @@ class BoardRenderer {
       return;
     }
 
-    if (this.selectedNoteIds.size === 0) {
+    if (this.engine.getState().selection.length === 0) {
       return;
     }
 
     event.preventDefault();
-    this.deleteSelectedElements();
+    this.engine.handleKeyboard({
+      type: 'keyboard',
+      phase: 'down',
+      key: event.key,
+      code: event.code,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey
+    });
+    this.syncFromEngineState();
   };
 
   private handlePanStart = (event: PointerEvent) => {
@@ -879,16 +960,23 @@ class BoardRenderer {
     event.preventDefault();
 
     const origin = { x: event.clientX, y: event.clientY };
-    const startOffset = { ...this.panOffset };
+    let appliedDelta: PointerDelta = { x: 0, y: 0 };
     this.host.style.cursor = 'grabbing';
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      this.panOffset = {
-        x: startOffset.x + (moveEvent.clientX - origin.x) / this.zoom,
-        y: startOffset.y + (moveEvent.clientY - origin.y) / this.zoom
+      const delta = {
+        x: (moveEvent.clientX - origin.x) / this.zoom,
+        y: (moveEvent.clientY - origin.y) / this.zoom
       };
-      this.updatePanBackground();
-      this.refreshAllLayouts();
+      const stepDelta = {
+        x: delta.x - appliedDelta.x,
+        y: delta.y - appliedDelta.y
+      };
+      appliedDelta = delta;
+      this.dispatchAndSync({
+        type: 'pan_viewport',
+        delta: stepDelta
+      });
     };
 
     const onPointerUp = () => {
@@ -924,24 +1012,13 @@ class BoardRenderer {
       y: event.clientY - bounds.top
     };
 
-    const zoomFactor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
-    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * zoomFactor));
-
-    if (nextZoom === this.zoom) {
-      return;
-    }
-
-    const worldX = pointer.x / this.zoom - this.panOffset.x;
-    const worldY = pointer.y / this.zoom - this.panOffset.y;
-
-    this.zoom = nextZoom;
-    this.panOffset = {
-      x: pointer.x / this.zoom - worldX,
-      y: pointer.y / this.zoom - worldY
-    };
-
-    this.updatePanBackground();
-    this.refreshAllLayouts();
+    this.engine.handleWheel({
+      type: 'wheel',
+      point: pointer,
+      deltaX: event.deltaX,
+      deltaY: event.deltaY
+    });
+    this.syncFromEngineState();
     this.scheduleAutoFitAll();
   };
 
@@ -998,31 +1075,18 @@ class BoardRenderer {
   */
   private setSelection(noteIds: Iterable<string>, preferredActiveNoteId: string | null = null) {
     const noteIdList = Array.from(noteIds);
-    this.selectedNoteIds.clear();
-    noteIdList.forEach((noteId) => {
-      if (this.records.has(noteId)) {
-        this.selectedNoteIds.add(noteId);
-      }
-    });
-
-    if (preferredActiveNoteId && this.selectedNoteIds.has(preferredActiveNoteId)) {
+    if (preferredActiveNoteId) {
       this.activeNoteId = preferredActiveNoteId;
-    } else if (this.activeNoteId && this.selectedNoteIds.has(this.activeNoteId)) {
-      this.activeNoteId = this.activeNoteId;
-    } else {
-      this.activeNoteId = this.selectedNoteIds.values().next().value ?? null;
     }
-
-    this.records.forEach((record, recordId) => {
-      const isSelected = this.selectedNoteIds.has(recordId);
-
-      record.node.dataset.selected = isSelected ? 'true' : 'false';
-      record.node.style.outline = isSelected ? '2px solid rgba(20, 84, 133, 0.42)' : 'none';
-      record.node.style.outlineOffset = isSelected ? '0px' : '';
-      record.note?.setEditingEnabled(false);
-    });
-
-    this.refreshSelectionFrame();
+    this.dispatchAndSync(
+      {
+        type: 'select',
+        ids: noteIdList
+      },
+      {
+        resetEditing: true
+      }
+    );
   }
 
   private createNote(element: NoteElement): BoardRecord {
@@ -1047,12 +1111,29 @@ class BoardRenderer {
         return;
       }
 
-      if (!this.selectedNoteIds.has(note.model.id) || this.selectedNoteIds.size !== 1) {
+      const selection = this.engine.getState().selection;
+      if (!selection.includes(note.model.id) || selection.length !== 1) {
         return;
       }
 
       note.setEditingEnabled(true);
       note.editor.focus();
+    });
+    note.editor.addEventListener('input', () => {
+      const nextElements = this.getEngineElementsInOrder().map((engineElement) => {
+        if (engineElement.id !== note.model.id || engineElement.kind !== 'note') {
+          return engineElement;
+        }
+
+        return {
+          ...engineElement,
+          text: note.model.text
+        };
+      });
+      this.dispatchAndSync({
+        type: 'set_elements',
+        elements: nextElements
+      });
     });
 
     const record: BoardRecord = {
@@ -1069,11 +1150,6 @@ class BoardRenderer {
     this.applyFrameWithPan(note.node, note.model);
     note.scheduleAutoFit();
     this.records.set(note.model.id, record);
-    if (this.selectedNoteIds.size === 0) {
-      this.selectSingleNote(note.model.id);
-    } else {
-      this.setSelection(this.selectedNoteIds, this.activeNoteId);
-    }
     return record;
   }
 
@@ -1100,11 +1176,6 @@ class BoardRenderer {
     this.host.append(image.node);
     this.applyFrameWithPan(image.node, image.model);
     this.records.set(image.model.id, record);
-    if (this.selectedNoteIds.size === 0) {
-      this.selectSingleNote(image.model.id);
-    } else {
-      this.setSelection(this.selectedNoteIds, this.activeNoteId);
-    }
 
     return record;
   }

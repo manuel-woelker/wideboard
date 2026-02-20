@@ -10,12 +10,23 @@ import {
   type ResizeHandlePosition
 } from './elementFrame';
 import { createBoardImageRecord, type ImageElement, type ImageRecord } from './imageElement';
+import { createBoardLinkRecord, type LinkElement, type LinkRecord } from './linkElement';
 import { createBoardNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
 import { WIDEBOARD_NOTE_CLIPBOARD_MIME } from './engine/boardEvents';
-import type { BoardElement, BoardImageElement, BoardNoteElement } from './engine/boardEngineTypes';
+import type {
+  BoardElement,
+  BoardImageElement,
+  BoardLinkElement,
+  BoardNoteElement
+} from './engine/boardEngineTypes';
 import { BoardEngine } from './engine/BoardEngine';
 import type { BoardCommand } from './engine/boardEvents';
-export type { BoardElement, BoardImageElement as ImageElement, BoardNoteElement as NoteElement };
+export type {
+  BoardElement,
+  BoardImageElement as ImageElement,
+  BoardLinkElement as LinkElement,
+  BoardNoteElement as NoteElement
+};
 
 export interface BoardComponentProps {
   boardId?: string;
@@ -30,6 +41,10 @@ const MIN_NOTE_SIZE: MinimumSize = {
 const DEFAULT_IMAGE_SIZE: MinimumSize = {
   width: 320,
   height: 240
+};
+const DEFAULT_LINK_SIZE: MinimumSize = {
+  width: 340,
+  height: 180
 };
 const IMAGE_INSERT_OFFSET = 24;
 
@@ -47,10 +62,11 @@ const DEFAULT_ELEMENT: NoteElement = {
 
 interface BoardRecord {
   id: string;
-  kind: 'note' | 'image';
+  kind: 'note' | 'image' | 'link';
   node: HTMLDivElement;
   note?: NoteRecord;
   image?: ImageRecord;
+  link?: LinkRecord;
   scheduleAutoFit: () => void;
 }
 
@@ -67,6 +83,7 @@ class BoardRenderer {
 
   private noteSequence = 1;
   private imageSequence = 1;
+  private linkSequence = 1;
 
   private lastCopiedNote: NoteElement | null = null;
 
@@ -121,6 +138,7 @@ class BoardRenderer {
 
     this.noteSequence = this.deriveInitialNoteSequence(initialElements);
     this.imageSequence = this.deriveInitialImageSequence(initialElements);
+    this.linkSequence = this.deriveInitialLinkSequence(initialElements);
 
     this.host.addEventListener('pointerdown', this.handlePanStart, { capture: true });
     this.host.addEventListener('wheel', this.handleZoom, { passive: false });
@@ -189,6 +207,10 @@ class BoardRenderer {
     }
 
     if (element.kind !== 'image' || !record.image) {
+      if (record.kind !== 'link' || element.kind !== 'link' || !record.link) {
+        return;
+      }
+      record.link.applyModel(element);
       return;
     }
     record.image.model = element;
@@ -233,8 +255,10 @@ class BoardRenderer {
       if (!existing) {
         if (element.kind === 'note') {
           this.createNote(element);
-        } else {
+        } else if (element.kind === 'image') {
           this.createImage(element);
+        } else {
+          this.createLink(element);
         }
         return;
       }
@@ -461,6 +485,21 @@ class BoardRenderer {
     return maxExistingId + 1;
   }
 
+  private deriveInitialLinkSequence(elements: BoardElement[]) {
+    const maxExistingId = elements
+      .map((element) => {
+        if (element.kind !== 'link') {
+          return 0;
+        }
+
+        const match = /^link-(\d+)$/u.exec(element.id);
+        return match ? Number.parseInt(match[1], 10) : 0;
+      })
+      .reduce((maxId, currentId) => Math.max(maxId, currentId), 0);
+
+    return maxExistingId + 1;
+  }
+
   private generateNoteId() {
     while (this.engine.getState().elements[`note-${this.noteSequence}`]) {
       this.noteSequence += 1;
@@ -478,6 +517,16 @@ class BoardRenderer {
 
     const id = `image-${this.imageSequence}`;
     this.imageSequence += 1;
+    return id;
+  }
+
+  private generateLinkId() {
+    while (this.engine.getState().elements[`link-${this.linkSequence}`]) {
+      this.linkSequence += 1;
+    }
+
+    const id = `link-${this.linkSequence}`;
+    this.linkSequence += 1;
     return id;
   }
 
@@ -931,6 +980,117 @@ class BoardRenderer {
     }
   }
 
+  private getClipboardUrl(clipboard: DataTransfer | null | undefined) {
+    const rawText = clipboard?.getData('text/plain')?.trim();
+    if (!rawText) {
+      return null;
+    }
+
+    try {
+      const url = new URL(rawText);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return null;
+      }
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  private extractOpenGraphMeta(content: string, baseUrl: string) {
+    const parser = new DOMParser();
+    const documentNode = parser.parseFromString(content, 'text/html');
+    const readMeta = (key: string) => {
+      const node =
+        documentNode.querySelector(`meta[property="${key}"]`) ??
+        documentNode.querySelector(`meta[name="${key}"]`);
+      const value = node?.getAttribute('content')?.trim();
+      return value || null;
+    };
+
+    const resolveUrl = (value: string | null) => {
+      if (!value) {
+        return undefined;
+      }
+
+      try {
+        return new URL(value, baseUrl).href;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const title = readMeta('og:title') ?? documentNode.title?.trim() ?? undefined;
+    const description = readMeta('og:description') ?? undefined;
+    const imageSrc = resolveUrl(readMeta('og:image'));
+
+    if (!title && !description && !imageSrc) {
+      return null;
+    }
+
+    return {
+      title,
+      description,
+      imageSrc
+    };
+  }
+
+  private async fetchLinkPreview(url: string) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+      const html = await response.text();
+      return this.extractOpenGraphMeta(html, url);
+    } catch {
+      return null;
+    }
+  }
+
+  private async addLinkAtPosition(url: string, boardPosition: PointerDelta) {
+    const boundedPosition = this.boundPosition(boardPosition, DEFAULT_LINK_SIZE);
+    const id = this.generateLinkId();
+    const element: LinkElement = {
+      id,
+      kind: 'link',
+      x: boundedPosition.x,
+      y: boundedPosition.y,
+      width: DEFAULT_LINK_SIZE.width,
+      height: DEFAULT_LINK_SIZE.height,
+      url,
+      title: url
+    };
+    this.dispatchAndSync({
+      type: 'addElement',
+      element
+    });
+    this.selectSingleNote(id);
+
+    const preview = await this.fetchLinkPreview(url);
+    if (!preview) {
+      return;
+    }
+
+    const nextElements = this.getEngineElementsInOrder().map((current) => {
+      if (current.id !== id || current.kind !== 'link') {
+        return current;
+      }
+
+      return {
+        ...current,
+        title: preview.title ?? current.title,
+        description: preview.description,
+        imageSrc: preview.imageSrc
+      };
+    });
+
+    this.dispatchAndSync({
+      type: 'setElements',
+      elements: nextElements
+    });
+  }
+
   private handleCopy = (event: ClipboardEvent) => {
     if (!this.shouldHandleBoardClipboard(event)) {
       return;
@@ -977,6 +1137,13 @@ class BoardRenderer {
 
     const rawPayload = clipboard?.getData(WIDEBOARD_NOTE_CLIPBOARD_MIME);
     if (!rawPayload && !this.lastCopiedNote) {
+      const pastedUrl = this.getClipboardUrl(clipboard);
+      if (!pastedUrl) {
+        return;
+      }
+
+      event.preventDefault();
+      void this.addLinkAtPosition(pastedUrl, this.getViewportBoardCenterPosition());
       return;
     }
 
@@ -1359,6 +1526,31 @@ class BoardRenderer {
     this.host.append(image.node);
     this.applyFrameWithPan(image.node, image.model);
     this.records.set(image.model.id, record);
+
+    return record;
+  }
+
+  private createLink(element: LinkElement): BoardRecord {
+    const link = createBoardLinkRecord(element, {
+      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
+      callbacks: {
+        beginSelectionDrag: (event, elementId) => {
+          this.beginSelectionDrag(event, elementId);
+        }
+      }
+    });
+
+    const record: BoardRecord = {
+      id: link.model.id,
+      kind: 'link',
+      node: link.node,
+      link,
+      scheduleAutoFit: () => {}
+    };
+
+    this.host.append(link.node);
+    this.applyFrameWithPan(link.node, link.model);
+    this.records.set(link.model.id, record);
 
     return record;
   }

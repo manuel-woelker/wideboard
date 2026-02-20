@@ -37,12 +37,33 @@ export interface BoardImageElement extends BoardElementFrame {
   alt: string;
 }
 
-export type BoardElementKind = BoardNoteElement['kind'] | BoardImageElement['kind'];
+/**
+ * Board link preview model owned by engine state.
+ */
+export interface BoardLinkElement extends BoardElementFrame {
+  /** Stable element identifier. */
+  id: string;
+  /** Discriminant for link elements. */
+  kind: 'link';
+  /** Absolute URL represented by this element. */
+  url: string;
+  /** Display title for the link card. */
+  title: string;
+  /** Optional Open Graph description snippet. */
+  description?: string;
+  /** Optional Open Graph preview image URL. */
+  imageSrc?: string;
+}
+
+export type BoardElementKind =
+  | BoardNoteElement['kind']
+  | BoardImageElement['kind']
+  | BoardLinkElement['kind'];
 
 /**
  * Discriminated board element union consumed by engine reducers and UI adapters.
  */
-export type BoardElement = BoardNoteElement | BoardImageElement;
+export type BoardElement = BoardNoteElement | BoardImageElement | BoardLinkElement;
 
 /**
  * Canonical viewport values used for pan and zoom transitions.

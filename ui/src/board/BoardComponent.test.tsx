@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { BoardComponent, type ImageElement, type NoteElement } from './BoardComponent';
 import type { BoardEngine } from './engine/BoardEngine';
 
@@ -669,6 +669,61 @@ describe('BoardComponent', () => {
       expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
     } finally {
       URL.createObjectURL = originalCreateObjectURL;
+    }
+  });
+
+  it('creates a link element from pasted url text and applies open graph preview data', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        `
+          <html>
+            <head>
+              <meta property="og:title" content="Example OG Title" />
+              <meta property="og:description" content="Example OG Description" />
+              <meta property="og:image" content="https://example.com/preview.png" />
+            </head>
+          </html>
+        `,
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/html'
+          }
+        }
+      );
+    }) as typeof fetch;
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+      const board = screen.getByTestId('board-component');
+
+      const clipboardData = {
+        files: [],
+        items: [],
+        getData: (type: string) => {
+          if (type === 'text/plain') {
+            return 'https://example.com/article';
+          }
+          return '';
+        }
+      };
+
+      const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      Object.defineProperty(pasteEvent, 'clipboardData', {
+        value: clipboardData
+      });
+
+      board.dispatchEvent(pasteEvent);
+
+      await waitFor(() => {
+        expect(screen.getByText('Example OG Title')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Example OG Description')).toBeInTheDocument();
+      expect(document.querySelectorAll('[data-element-id]').length).toBe(2);
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://example.com/article');
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 

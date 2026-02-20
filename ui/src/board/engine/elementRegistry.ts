@@ -1,5 +1,6 @@
 import type { BoardElement, BoardElementFrame, BoardElementKind } from './boardEngineTypes';
 import { createImageElementType } from './elementTypes/imageElementType';
+import { createLinkElementType } from './elementTypes/linkElementType';
 import { createNoteElementType } from './elementTypes/noteElementType';
 
 /**
@@ -116,7 +117,11 @@ export class BoardElementRegistry {
  * Creates the default registry used by the engine (note + image kinds).
  */
 export function createDefaultBoardElementRegistry() {
-  return new BoardElementRegistry([createNoteElementType(), createImageElementType()]);
+  return new BoardElementRegistry([
+    createNoteElementType(),
+    createImageElementType(),
+    createLinkElementType()
+  ]);
 }
 
 if (import.meta.vitest) {

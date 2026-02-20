@@ -45,12 +45,11 @@ const DEFAULT_ELEMENT: NoteElement = {
 };
 
 interface BoardRecord {
+  id: string;
   kind: 'note' | 'image';
   node: HTMLDivElement;
   note?: NoteRecord;
   image?: ImageRecord;
-  getModel: () => BoardElement;
-  setModel: (model: BoardElement) => void;
   scheduleAutoFit: () => void;
 }
 
@@ -148,6 +147,25 @@ class BoardRenderer {
     return state.elementOrder.map((id) => state.elements[id]);
   }
 
+  private getEngineElement(id: string) {
+    return this.engine.getState().elements[id];
+  }
+
+  private syncRecordModel(record: BoardRecord, element: BoardElement) {
+    if (record.kind === 'note') {
+      if (element.kind !== 'note' || !record.note) {
+        return;
+      }
+      record.note.model = element;
+      return;
+    }
+
+    if (element.kind !== 'image' || !record.image) {
+      return;
+    }
+    record.image.model = element;
+  }
+
   private syncFromEngineState(options: { resetEditing?: boolean } = {}) {
     const state = this.engine.getState();
     this.panOffset = {
@@ -178,7 +196,7 @@ class BoardRenderer {
         return;
       }
 
-      existing.setModel(element);
+      this.syncRecordModel(existing, element);
       this.applyFrameWithPan(existing.node, element);
       existing.scheduleAutoFit();
       this.host.append(existing.node);
@@ -414,7 +432,11 @@ class BoardRenderer {
   private refreshAllLayouts() {
     this.updatePanBackground();
     this.records.forEach((record) => {
-      this.applyFrameWithPan(record.node, record.getModel());
+      const model = this.getEngineElement(record.id);
+      if (!model) {
+        return;
+      }
+      this.applyFrameWithPan(record.node, model);
     });
     this.refreshSelectionFrame();
   }
@@ -487,23 +509,23 @@ class BoardRenderer {
     return record.note ?? null;
   }
 
-  private getSelectedRecords() {
-    return Array.from(this.engine.getState().selection)
-      .map((noteId) => this.records.get(noteId))
-      .filter((record): record is BoardRecord => Boolean(record));
+  private getSelectedElements() {
+    return this.engine
+      .getState()
+      .selection.map((id) => this.getEngineElement(id))
+      .filter((element): element is BoardElement => Boolean(element));
   }
 
   private getSelectedBounds() {
-    const selected = this.getSelectedRecords();
-    if (selected.length === 0) {
+    const selectedElements = this.getSelectedElements();
+    if (selectedElements.length === 0) {
       return null;
     }
 
-    const frames = selected.map((record) => record.getModel());
-    const left = Math.min(...frames.map((frame) => frame.x));
-    const top = Math.min(...frames.map((frame) => frame.y));
-    const right = Math.max(...frames.map((frame) => frame.x + frame.width));
-    const bottom = Math.max(...frames.map((frame) => frame.y + frame.height));
+    const left = Math.min(...selectedElements.map((element) => element.x));
+    const top = Math.min(...selectedElements.map((element) => element.y));
+    const right = Math.max(...selectedElements.map((element) => element.x + element.width));
+    const bottom = Math.max(...selectedElements.map((element) => element.y + element.height));
 
     return {
       x: left,
@@ -541,15 +563,14 @@ class BoardRenderer {
       this.setSelection(currentSelection, noteId);
     }
 
-    const selected = this.getSelectedRecords();
-    if (selected.length === 0) {
+    const selectedIds = this.engine.getState().selection;
+    if (selectedIds.length === 0) {
       return;
     }
 
     const origin = { x: event.clientX, y: event.clientY };
     let hasStartedDrag = false;
     let appliedDelta: PointerDelta = { x: 0, y: 0 };
-    const selectedIds = selected.map((record) => record.getModel().id);
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const rawDelta: PointerDelta = {
@@ -606,20 +627,20 @@ class BoardRenderer {
     event.preventDefault();
     event.stopPropagation();
 
-    const selected = this.getSelectedRecords();
+    const selected = this.getSelectedElements();
     const startBounds = this.getSelectedBounds();
     if (selected.length === 0 || !startBounds) {
       return;
     }
 
     const startingFrames = new Map(
-      selected.map((record) => [
-        record.getModel().id,
+      selected.map((element) => [
+        element.id,
         {
-          x: record.getModel().x,
-          y: record.getModel().y,
-          width: record.getModel().width,
-          height: record.getModel().height
+          x: element.x,
+          y: element.y,
+          width: element.width,
+          height: element.height
         }
       ])
     );
@@ -627,14 +648,13 @@ class BoardRenderer {
     const minimumWidth = Math.max(
       1,
       ...selected.map(
-        (record) => (startBounds.width * MIN_NOTE_SIZE.width) / Math.max(record.getModel().width, 1)
+        (element) => (startBounds.width * MIN_NOTE_SIZE.width) / Math.max(element.width, 1)
       )
     );
     const minimumHeight = Math.max(
       1,
       ...selected.map(
-        (record) =>
-          (startBounds.height * MIN_NOTE_SIZE.height) / Math.max(record.getModel().height, 1)
+        (element) => (startBounds.height * MIN_NOTE_SIZE.height) / Math.max(element.height, 1)
       )
     );
 
@@ -653,8 +673,7 @@ class BoardRenderer {
       const scaleY = nextBounds.height / startBounds.height;
       const nextById = new Map<string, BoardElement>();
 
-      selected.forEach((record) => {
-        const current = record.getModel();
+      selected.forEach((current) => {
         const frame = startingFrames.get(current.id);
         if (!frame) {
           return;
@@ -675,13 +694,17 @@ class BoardRenderer {
         type: 'set_elements',
         elements: nextElements
       });
-      selected.forEach((record) => record.scheduleAutoFit());
+      selected.forEach((element) => {
+        this.records.get(element.id)?.scheduleAutoFit();
+      });
 
       this.refreshSelectionFrame();
     };
 
     const onPointerUp = () => {
-      selected.forEach((record) => record.scheduleAutoFit());
+      selected.forEach((element) => {
+        this.records.get(element.id)?.scheduleAutoFit();
+      });
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
@@ -1035,17 +1058,18 @@ class BoardRenderer {
     const top = Math.min(origin.y, current.y);
     const bottom = Math.max(origin.y, current.y);
 
-    return Array.from(this.records.values())
-      .filter((record) => {
-        const model = record.getModel();
-        const noteLeft = (model.x + this.panOffset.x) * this.zoom;
-        const noteTop = (model.y + this.panOffset.y) * this.zoom;
-        const noteRight = noteLeft + model.width * this.zoom;
-        const noteBottom = noteTop + model.height * this.zoom;
+    const state = this.engine.getState();
+    return state.elementOrder
+      .map((id) => state.elements[id])
+      .filter((element) => {
+        const noteLeft = (element.x + this.panOffset.x) * this.zoom;
+        const noteTop = (element.y + this.panOffset.y) * this.zoom;
+        const noteRight = noteLeft + element.width * this.zoom;
+        const noteBottom = noteTop + element.height * this.zoom;
 
         return noteLeft <= right && noteRight >= left && noteTop <= bottom && noteBottom >= top;
       })
-      .map((record) => record.getModel().id);
+      .map((element) => element.id);
   }
 
   private updateMarquee(origin: PointerDelta, current: PointerDelta) {
@@ -1137,13 +1161,10 @@ class BoardRenderer {
     });
 
     const record: BoardRecord = {
+      id: note.model.id,
       kind: 'note',
       node: note.node,
       note,
-      getModel: () => note.model,
-      setModel: (model) => {
-        note.model = model as NoteElement;
-      },
       scheduleAutoFit: () => note.scheduleAutoFit()
     };
     this.host.append(note.node);
@@ -1163,13 +1184,10 @@ class BoardRenderer {
     });
 
     const record: BoardRecord = {
+      id: image.model.id,
       kind: 'image',
       node: image.node,
       image,
-      getModel: () => image.model,
-      setModel: (model) => {
-        image.model = model as ImageElement;
-      },
       scheduleAutoFit: () => {}
     };
 

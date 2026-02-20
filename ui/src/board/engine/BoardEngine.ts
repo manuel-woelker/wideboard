@@ -157,6 +157,7 @@ function applyOrdering(order: string[], ids: string[], action: BoardOrderingActi
 }
 
 type MutateState = (state: BoardState, deltas: BoardDelta[]) => void;
+type HistoryPolicy = 'plain' | 'coalescing' | 'none';
 type CommandType = BoardCommand['type'];
 type CommandHandler<TType extends CommandType> = (
   state: BoardState,
@@ -180,6 +181,10 @@ interface BoardHistoryEntry {
     kind: 'user' | 'synthetic';
     groupId?: string;
   };
+}
+
+interface CommitOptions {
+  historyPolicy?: HistoryPolicy;
 }
 
 function cloneDelta(delta: BoardDelta): BoardDelta {
@@ -421,7 +426,8 @@ export class BoardEngine {
    */
   public handlePointer(event: BoardPointerEvent): BoardRevision {
     if (event.phase === 'down' && event.button === 0 && event.targetElementId) {
-      return this.commit((state, deltas) => {
+      return this.commit(
+        (state, deltas) => {
         const targetId = event.targetElementId;
         if (!targetId || !state.elements[targetId]) {
           return;
@@ -475,7 +481,11 @@ export class BoardEngine {
           previous: { mode: previousInteraction.mode },
           current: { mode: state.interaction.mode }
         });
-      });
+        },
+        {
+          historyPolicy: 'none'
+        }
+      );
     }
 
     if (
@@ -484,7 +494,8 @@ export class BoardEngine {
       (this.state.interaction.pointerId === null ||
         event.pointerId === this.state.interaction.pointerId)
     ) {
-      return this.commit((state, deltas) => {
+      return this.commit(
+        (state, deltas) => {
         if (!stateIsDraggingSelection(state)) {
           return;
         }
@@ -525,7 +536,11 @@ export class BoardEngine {
             current: cloneElement(nextElement)
           });
         });
-      });
+        },
+        {
+          historyPolicy: 'coalescing'
+        }
+      );
     }
 
     if (
@@ -534,7 +549,8 @@ export class BoardEngine {
       (this.state.interaction.pointerId === null ||
         event.pointerId === this.state.interaction.pointerId)
     ) {
-      return this.commit((state, deltas) => {
+      return this.commit(
+        (state, deltas) => {
         if (!stateIsDraggingSelection(state)) {
           return;
         }
@@ -546,7 +562,11 @@ export class BoardEngine {
           previous: { mode: previousInteractionMode },
           current: { mode: 'idle' }
         });
-      });
+        },
+        {
+          historyPolicy: 'none'
+        }
+      );
     }
 
     return this.revision;
@@ -663,10 +683,15 @@ export class BoardEngine {
    * Applies a board command and records deltas/revision when state changes.
    */
   public execute(command: BoardCommand): BoardRevision {
-    return this.commit((state, deltas) => {
-      const handler = this.commandHandlers[command.type] as CommandHandler<CommandType>;
-      handler(state, deltas, command as Extract<BoardCommand, { type: CommandType }>);
-    });
+    return this.commit(
+      (state, deltas) => {
+        const handler = this.commandHandlers[command.type] as CommandHandler<CommandType>;
+        handler(state, deltas, command as Extract<BoardCommand, { type: CommandType }>);
+      },
+      {
+        historyPolicy: this.getCommandHistoryPolicy(command)
+      }
+    );
   }
 
   /** Builds the strict `dispatch.<type>(payload)` plain function object. */
@@ -689,6 +714,28 @@ export class BoardEngine {
       } as Extract<BoardCommand, { type: TType }>;
       return this.execute(command);
     }) as DispatchMethod<TType>;
+  }
+
+  private getCommandHistoryPolicy(command: BoardCommand): HistoryPolicy {
+    if (
+      command.type === 'select' ||
+      command.type === 'clearSelection' ||
+      command.type === 'setViewport' ||
+      command.type === 'panViewport' ||
+      command.type === 'zoomViewport'
+    ) {
+      return 'none';
+    }
+
+    if (
+      command.type === 'moveSelection' ||
+      command.type === 'moveElements' ||
+      command.type === 'setElements'
+    ) {
+      return 'coalescing';
+    }
+
+    return 'plain';
   }
 
   /** Builds the board command dispatch table. */
@@ -1142,7 +1189,7 @@ export class BoardEngine {
   /**
    * Runs a mutation transaction and commits revision/deltas atomically.
    */
-  private commit(mutate: MutateState): BoardRevision {
+  private commit(mutate: MutateState, options: CommitOptions = {}): BoardRevision {
     const nextState = cloneState(this.state);
     const deltas: BoardDelta[] = [];
     mutate(nextState, deltas);
@@ -1158,13 +1205,17 @@ export class BoardEngine {
       deltas: cloneDeltas(deltas)
     };
     this.deltaHistory.push(envelope);
-    this.recordHistoryFromCommit(deltas);
+    this.recordHistoryFromCommit(deltas, options.historyPolicy ?? 'plain');
     this.notifyListeners(envelope);
 
     return this.revision;
   }
 
-  private recordHistoryFromCommit(deltas: BoardDelta[]) {
+  private recordHistoryFromCommit(deltas: BoardDelta[], historyPolicy: HistoryPolicy) {
+    if (historyPolicy === 'none') {
+      return;
+    }
+
     const durableDeltas = deltas.filter((delta) => isDurableHistoryDelta(delta));
     if (durableDeltas.length === 0) {
       return;
@@ -1178,15 +1229,17 @@ export class BoardEngine {
         kind: 'user'
       }
     };
-    const previousEntry = this.history[this.history.length - 1];
-    if (previousEntry && previousEntry.meta.kind === 'user') {
-      const coalesced =
-        this.tryCoalesceConsecutiveMoveEntries(previousEntry, nextEntry) ??
-        this.tryCoalesceConsecutiveNoteTextEntries(previousEntry, nextEntry);
-      if (coalesced) {
-        this.history[this.history.length - 1] = coalesced;
-        this.historyCursor = this.history.length - 1;
-        return;
+    if (historyPolicy === 'coalescing') {
+      const previousEntry = this.history[this.history.length - 1];
+      if (previousEntry && previousEntry.meta.kind === 'user') {
+        const coalesced =
+          this.tryCoalesceConsecutiveMoveEntries(previousEntry, nextEntry) ??
+          this.tryCoalesceConsecutiveNoteTextEntries(previousEntry, nextEntry);
+        if (coalesced) {
+          this.history[this.history.length - 1] = coalesced;
+          this.historyCursor = this.history.length - 1;
+          return;
+        }
       }
     }
 
@@ -2067,6 +2120,37 @@ if (import.meta.vitest) {
         metaKey: false
       });
       expect(engine.getState().elements['note-1'].x).toBe(20);
+    });
+
+    it('does not record selection-only commands in undo history', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.select({
+        ids: ['note-1']
+      });
+      engine.dispatch.clearSelection();
+
+      expect(engine.canUndo()).toBe(false);
+      expect(engine.canRedo()).toBe(false);
+    });
+
+    it('does not record pan and zoom commands in undo history', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      engine.dispatch.panViewport({
+        delta: { x: 20, y: -10 }
+      });
+      engine.dispatch.zoomViewport({
+        zoom: 1.4,
+        anchor: { x: 100, y: 120 }
+      });
+
+      expect(engine.canUndo()).toBe(false);
+      expect(engine.canRedo()).toBe(false);
     });
 
     it('rejects unknown kinds during initialization', () => {

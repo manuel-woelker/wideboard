@@ -727,6 +727,70 @@ describe('BoardComponent', () => {
     }
   });
 
+  it('falls back to the allorigins proxy when direct link fetch fails', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(
+        new Response(
+          `
+            <html>
+              <head>
+                <meta property="og:title" content="Proxy OG Title" />
+                <meta property="og:description" content="Proxy OG Description" />
+                <meta property="og:image" content="/proxy-preview.png" />
+              </head>
+            </html>
+          `,
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/html'
+            }
+          }
+        )
+      ) as typeof fetch;
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+      const board = screen.getByTestId('board-component');
+
+      const clipboardData = {
+        files: [],
+        items: [],
+        getData: (type: string) => {
+          if (type === 'text/plain') {
+            return 'https://rankmath.com/seo-glossary/open-graph-meta-tags/';
+          }
+          return '';
+        }
+      };
+
+      const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      Object.defineProperty(pasteEvent, 'clipboardData', {
+        value: clipboardData
+      });
+
+      board.dispatchEvent(pasteEvent);
+
+      await waitFor(() => {
+        expect(screen.getByText('Proxy OG Title')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Proxy OG Description')).toBeInTheDocument();
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        1,
+        'https://rankmath.com/seo-glossary/open-graph-meta-tags/'
+      );
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        2,
+        'https://api.allorigins.win/raw?url=https%3A%2F%2Frankmath.com%2Fseo-glossary%2Fopen-graph-meta-tags%2F'
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('creates an image element when dropping image files on the board', () => {
     const originalCreateObjectURL = URL.createObjectURL;
     URL.createObjectURL = vi.fn(() => 'blob:test-drop-url');

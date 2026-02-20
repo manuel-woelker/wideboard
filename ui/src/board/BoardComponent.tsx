@@ -47,6 +47,7 @@ const DEFAULT_LINK_SIZE: MinimumSize = {
   height: 220
 };
 const IMAGE_INSERT_OFFSET = 24;
+const ALL_ORIGINS_RAW_PROXY = 'https://api.allorigins.win/raw?url=';
 
 const GRID_SIZE = 38;
 
@@ -1036,16 +1037,24 @@ class BoardRenderer {
   }
 
   private async fetchLinkPreview(url: string) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        return null;
+    const fetchCandidates = [url, `${ALL_ORIGINS_RAW_PROXY}${encodeURIComponent(url)}`];
+    for (const candidate of fetchCandidates) {
+      try {
+        const response = await fetch(candidate);
+        if (!response.ok) {
+          continue;
+        }
+        const html = await response.text();
+        const metadata = this.extractOpenGraphMeta(html, url);
+        if (metadata) {
+          return metadata;
+        }
+      } catch {
+        // Try the next candidate URL.
       }
-      const html = await response.text();
-      return this.extractOpenGraphMeta(html, url);
-    } catch {
-      return null;
     }
+
+    return null;
   }
 
   private async addLinkAtPosition(url: string, boardPosition: PointerDelta) {

@@ -438,6 +438,142 @@ describe('BoardComponent', () => {
     expect(screen.getByRole('toolbar', { name: 'Board tools' })).toBeInTheDocument();
   });
 
+  it('toggles the debug overlay from a lower-right button', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    const toggle = screen.getByTestId('board-debug-toggle');
+    const controls = screen.getByTestId('board-debug-controls');
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(controls.getAttribute('style')).toContain('right: 1rem');
+    expect(controls.getAttribute('style')).toContain('bottom: 1rem');
+    expect(screen.queryByTestId('board-debug-overlay')).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('board-debug-overlay')).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByTestId('board-debug-overlay')).not.toBeInTheDocument();
+  });
+
+  it('switches across debug overlay tabs', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+    fireEvent.click(screen.getByTestId('board-debug-toggle'));
+
+    expect(screen.getByTestId('board-debug-raw-state-panel')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('board-debug-tab-last-update'));
+    expect(screen.getByTestId('board-debug-last-update-empty')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('board-debug-tab-undo-stack'));
+    expect(screen.getByTestId('board-debug-undo-stack-empty')).toBeInTheDocument();
+  });
+
+  it('updates raw state tab after board mutation', async () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    fireEvent.click(screen.getByTestId('board-debug-toggle'));
+    expect(screen.getByTestId('board-debug-raw-state-panel').textContent).toContain('"x": 10');
+
+    engine.dispatch.select({
+      ids: ['test-note']
+    });
+    engine.dispatch.moveSelection({
+      delta: { x: 30, y: 0 }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('board-debug-raw-state-panel').textContent).toContain('"x": 40');
+    });
+  });
+
+  it('shows the last update payload in debug tab after mutations', async () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    fireEvent.click(screen.getByTestId('board-debug-toggle'));
+    fireEvent.click(screen.getByTestId('board-debug-tab-last-update'));
+    expect(screen.getByTestId('board-debug-last-update-empty')).toBeInTheDocument();
+
+    engine.dispatch.addElement({
+      element: {
+        id: 'event-note',
+        kind: 'note',
+        x: 60,
+        y: 70,
+        width: 200,
+        height: 120,
+        text: 'Event note'
+      }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('board-debug-last-update-panel').textContent).toContain(
+        '"type": "element_added"'
+      );
+    });
+  });
+
+  it('shows undo stack entries with highlighted current position', async () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    engine.dispatch.addElement({
+      element: {
+        id: 'history-note-1',
+        kind: 'note',
+        x: 80,
+        y: 90,
+        width: 180,
+        height: 110,
+        text: 'History A'
+      }
+    });
+    engine.dispatch.addElement({
+      element: {
+        id: 'history-note-2',
+        kind: 'note',
+        x: 100,
+        y: 120,
+        width: 180,
+        height: 110,
+        text: 'History B'
+      }
+    });
+    engine.undo();
+
+    fireEvent.click(screen.getByTestId('board-debug-toggle'));
+    fireEvent.click(screen.getByTestId('board-debug-tab-undo-stack'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('board-debug-undo-stack-position').textContent).toContain(
+        'Position: 0 / 1'
+      );
+    });
+    expect(screen.getByTestId('board-debug-undo-stack-entry-0')).toHaveAttribute(
+      'data-current',
+      'true'
+    );
+    expect(screen.getByTestId('board-debug-undo-stack-entry-1')).toHaveAttribute(
+      'data-current',
+      'false'
+    );
+  });
+
   it('enters note adding mode from the toolbar action', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     const action = screen.getByTestId('create-note-action');

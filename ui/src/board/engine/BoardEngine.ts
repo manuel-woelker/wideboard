@@ -183,6 +183,35 @@ interface BoardHistoryEntry {
   };
 }
 
+/**
+ * Read-only history entry snapshot exposed for debug tooling.
+ */
+export interface BoardEngineHistoryEntrySnapshot {
+  /** Zero-based index in the linear history list. */
+  index: number;
+  /** Forward deltas for applying this entry. */
+  forward: BoardDelta[];
+  /** Backward deltas for undoing this entry. */
+  backward: BoardDelta[];
+  /** History metadata describing origin and grouping. */
+  meta: {
+    /** Entry origin kind. */
+    kind: 'user' | 'synthetic';
+    /** Synthetic linearization group id when present. */
+    groupId?: string;
+  };
+}
+
+/**
+ * Read-only undo/redo history snapshot exposed for debug tooling.
+ */
+export interface BoardEngineHistorySnapshot {
+  /** Current applied history position. -1 means before the first entry. */
+  cursor: number;
+  /** All linear history entries including redo-visible entries. */
+  entries: BoardEngineHistoryEntrySnapshot[];
+}
+
 interface CommitOptions {
   historyPolicy?: HistoryPolicy;
 }
@@ -1147,6 +1176,24 @@ export class BoardEngine {
    */
   public canRedo() {
     return this.historyCursor < this.history.length - 1;
+  }
+
+  /**
+   * Returns a clone-safe snapshot of undo/redo history and cursor.
+   */
+  public getHistorySnapshot(): BoardEngineHistorySnapshot {
+    return {
+      cursor: this.historyCursor,
+      entries: this.history.map((entry, index) => ({
+        index,
+        forward: cloneDeltas(entry.forward),
+        backward: cloneDeltas(entry.backward),
+        meta: {
+          kind: entry.meta.kind,
+          groupId: entry.meta.groupId
+        }
+      }))
+    };
   }
 
   /**

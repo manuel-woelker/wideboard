@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ALL_RESIZE_HANDLES,
   applyFrameLayout,
@@ -17,9 +17,14 @@ import type {
   BoardElement,
   BoardImageElement,
   BoardLinkElement,
-  BoardNoteElement
+  BoardNoteElement,
+  BoardState
 } from './engine/boardEngineTypes';
-import { BoardEngine } from './engine/BoardEngine';
+import {
+  BoardEngine,
+  type BoardEngineHistorySnapshot,
+  type BoardEngineUpdate
+} from './engine/BoardEngine';
 import type { BoardCommand } from './engine/boardEvents';
 export type {
   BoardElement,
@@ -60,6 +65,56 @@ const DEFAULT_ELEMENT: NoteElement = {
   height: 180,
   text: 'Double-click or type to edit this note.'
 };
+
+type DebugOverlayTab = 'raw_state' | 'last_update' | 'undo_stack';
+
+function cloneBoardState(state: Readonly<BoardState>): BoardState {
+  const interaction =
+    state.interaction.mode === 'dragging_selection'
+      ? {
+          ...state.interaction,
+          origin: { ...state.interaction.origin },
+          elementIds: [...state.interaction.elementIds],
+          startPositions: Object.fromEntries(
+            Object.entries(state.interaction.startPositions).map(([id, position]) => [
+              id,
+              { ...position }
+            ])
+          )
+        }
+      : { mode: 'idle' as const };
+
+  return {
+    elements: Object.fromEntries(
+      Object.entries(state.elements).map(([id, element]) => [id, { ...element }])
+    ),
+    elementOrder: [...state.elementOrder],
+    selection: [...state.selection],
+    viewport: { ...state.viewport },
+    interaction
+  };
+}
+
+function toStableValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => toStableValue(entry));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(objectValue)
+      .sort()
+      .map((key) => [key, toStableValue(objectValue[key])])
+  );
+}
+
+function toStableJson(value: unknown): string {
+  return JSON.stringify(toStableValue(value), null, 2);
+}
 
 interface BoardRecord {
   id: string;
@@ -1621,9 +1676,33 @@ export function BoardComponent({
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
   const [isAddingNote, setIsAddingNote] = useState(false);
+  const [isDebugOverlayOpen, setIsDebugOverlayOpen] = useState(false);
+  const [activeDebugTab, setActiveDebugTab] = useState<DebugOverlayTab>('raw_state');
+  const [debugBoardState, setDebugBoardState] = useState<BoardState | null>(null);
+  const [debugLastUpdate, setDebugLastUpdate] = useState<BoardEngineUpdate | null>(null);
+  const [debugHistory, setDebugHistory] = useState<BoardEngineHistorySnapshot>({
+    cursor: -1,
+    entries: []
+  });
   const elementSnapshotRef = useRef<BoardElement[]>(
     initialElements?.map((item) => ({ ...item })) ?? [{ ...DEFAULT_ELEMENT }]
   );
+
+  const debugRawStateText = useMemo(() => {
+    if (activeDebugTab !== 'raw_state' || !debugBoardState) {
+      return '';
+    }
+
+    return toStableJson(debugBoardState);
+  }, [activeDebugTab, debugBoardState]);
+
+  const debugLastUpdateText = useMemo(() => {
+    if (activeDebugTab !== 'last_update' || !debugLastUpdate) {
+      return '';
+    }
+
+    return toStableJson(debugLastUpdate);
+  }, [activeDebugTab, debugLastUpdate]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1633,10 +1712,23 @@ export function BoardComponent({
 
     const renderer = new BoardRenderer(host, elementSnapshotRef.current);
     rendererRef.current = renderer;
-    onEngineReady?.(renderer.getEngine());
+    const engine = renderer.getEngine();
+    setDebugBoardState(cloneBoardState(engine.getState()));
+    setDebugHistory(engine.getHistorySnapshot());
+    const unsubscribeFromDebugUpdates = engine.subscribe((update) => {
+      setDebugBoardState(cloneBoardState(engine.getState()));
+      setDebugHistory(engine.getHistorySnapshot());
+      setDebugLastUpdate({
+        revision: update.revision,
+        deltas: JSON.parse(JSON.stringify(update.deltas))
+      });
+    });
+
+    onEngineReady?.(engine);
 
     return () => {
       rendererRef.current = null;
+      unsubscribeFromDebugUpdates();
       renderer.destroy();
     };
   }, [onEngineReady]);
@@ -1687,6 +1779,184 @@ export function BoardComponent({
           + Note
         </button>
       </div>
+      <div
+        data-testid="board-debug-controls"
+        style={{
+          position: 'absolute',
+          right: '1rem',
+          bottom: '1rem',
+          zIndex: '30'
+        }}
+      >
+        <button
+          type="button"
+          data-testid="board-debug-toggle"
+          aria-pressed={isDebugOverlayOpen}
+          onClick={() => setIsDebugOverlayOpen((value) => !value)}
+          style={{
+            border: 'none',
+            borderRadius: '999px',
+            padding: '0.55rem 0.85rem',
+            background: isDebugOverlayOpen ? '#1a446b' : '#173d5f',
+            color: '#ecf8ff',
+            fontWeight: '600',
+            cursor: 'pointer',
+            boxShadow: '0 8px 18px rgba(16, 46, 76, 0.34)'
+          }}
+        >
+          Debug
+        </button>
+      </div>
+      {isDebugOverlayOpen ? (
+        <section
+          aria-label="Board debug overlay"
+          data-testid="board-debug-overlay"
+          style={{
+            position: 'absolute',
+            right: '1rem',
+            bottom: '4rem',
+            width: 'min(30rem, calc(100% - 2rem))',
+            maxHeight: '65vh',
+            display: 'flex',
+            flexDirection: 'column',
+            borderRadius: '12px',
+            border: '1px solid rgba(22, 55, 88, 0.45)',
+            background: 'rgba(248, 253, 255, 0.97)',
+            boxShadow: '0 22px 44px rgba(13, 45, 74, 0.3)',
+            overflow: 'hidden',
+            zIndex: '31'
+          }}
+        >
+          <header
+            style={{
+              display: 'flex',
+              gap: '0.45rem',
+              padding: '0.5rem',
+              borderBottom: '1px solid rgba(22, 55, 88, 0.2)'
+            }}
+          >
+            <button
+              type="button"
+              data-testid="board-debug-tab-raw-state"
+              aria-pressed={activeDebugTab === 'raw_state'}
+              onClick={() => setActiveDebugTab('raw_state')}
+              style={{
+                border: 'none',
+                borderRadius: '8px',
+                padding: '0.4rem 0.55rem',
+                background: activeDebugTab === 'raw_state' ? '#0e567d' : '#dceefa',
+                color: activeDebugTab === 'raw_state' ? '#f1faff' : '#1b486f',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Raw state
+            </button>
+            <button
+              type="button"
+              data-testid="board-debug-tab-last-update"
+              aria-pressed={activeDebugTab === 'last_update'}
+              onClick={() => setActiveDebugTab('last_update')}
+              style={{
+                border: 'none',
+                borderRadius: '8px',
+                padding: '0.4rem 0.55rem',
+                background: activeDebugTab === 'last_update' ? '#0e567d' : '#dceefa',
+                color: activeDebugTab === 'last_update' ? '#f1faff' : '#1b486f',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Last update
+            </button>
+            <button
+              type="button"
+              data-testid="board-debug-tab-undo-stack"
+              aria-pressed={activeDebugTab === 'undo_stack'}
+              onClick={() => setActiveDebugTab('undo_stack')}
+              style={{
+                border: 'none',
+                borderRadius: '8px',
+                padding: '0.4rem 0.55rem',
+                background: activeDebugTab === 'undo_stack' ? '#0e567d' : '#dceefa',
+                color: activeDebugTab === 'undo_stack' ? '#f1faff' : '#1b486f',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Undo stack
+            </button>
+          </header>
+          <div
+            style={{
+              padding: '0.6rem',
+              overflow: 'auto',
+              fontFamily: '"Cascadia Mono", "Consolas", monospace',
+              fontSize: '0.76rem',
+              lineHeight: 1.4
+            }}
+          >
+            {activeDebugTab === 'raw_state' ? (
+              <pre data-testid="board-debug-raw-state-panel" style={{ margin: 0 }}>
+                {debugRawStateText}
+              </pre>
+            ) : null}
+            {activeDebugTab === 'last_update' ? (
+              debugLastUpdate ? (
+                <pre data-testid="board-debug-last-update-panel" style={{ margin: 0 }}>
+                  {debugLastUpdateText}
+                </pre>
+              ) : (
+                <p data-testid="board-debug-last-update-empty" style={{ margin: 0 }}>
+                  No board updates captured yet.
+                </p>
+              )
+            ) : null}
+            {activeDebugTab === 'undo_stack' ? (
+              <div data-testid="board-debug-undo-stack-panel">
+                {debugHistory.entries.length === 0 ? (
+                  <p data-testid="board-debug-undo-stack-empty" style={{ margin: 0 }}>
+                    No undo history yet.
+                  </p>
+                ) : (
+                  <>
+                    <p
+                      data-testid="board-debug-undo-stack-position"
+                      style={{ margin: '0 0 0.5rem' }}
+                    >
+                      Position: {debugHistory.cursor} / {debugHistory.entries.length - 1}
+                    </p>
+                    <ol
+                      data-testid="board-debug-undo-stack-list"
+                      style={{ margin: 0, paddingLeft: '1.25rem' }}
+                    >
+                      {debugHistory.entries.map((entry) => {
+                        const isCurrent = entry.index === debugHistory.cursor;
+                        return (
+                          <li
+                            key={`history-entry-${entry.index}`}
+                            data-testid={`board-debug-undo-stack-entry-${entry.index}`}
+                            data-current={isCurrent ? 'true' : 'false'}
+                            style={{
+                              padding: '0.3rem 0.4rem',
+                              borderRadius: '6px',
+                              background: isCurrent ? 'rgba(41, 159, 214, 0.2)' : 'transparent'
+                            }}
+                          >
+                            #{entry.index} {entry.meta.kind}
+                            {entry.meta.groupId ? ` (${entry.meta.groupId})` : ''} | forward:
+                            {' ' + entry.forward.length} | backward: {entry.backward.length}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       <div
         ref={hostRef}
         data-testid="board-component"

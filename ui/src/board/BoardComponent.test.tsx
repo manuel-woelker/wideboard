@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { BoardComponent, type ImageElement, type NoteElement } from './BoardComponent';
+import type { BoardEngine } from './engine/BoardEngine';
 
 describe('BoardComponent', () => {
   const baseNote: NoteElement = {
@@ -34,6 +35,36 @@ describe('BoardComponent', () => {
   it('renders note text with imperative board rendering', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
     expect(screen.getByText('Test note')).toBeInTheDocument();
+  });
+
+  it('updates board UI when external engine events dispatch mutations', () => {
+    const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
+    render(
+      <BoardComponent
+        initialElements={[baseNote]}
+        onEngineReady={onEngineReady}
+      />
+    );
+
+    const engine = onEngineReady.mock.calls.at(0)?.[0];
+    if (!engine) {
+      throw new Error('Expected BoardComponent to expose its engine instance.');
+    }
+
+    engine.dispatch({
+      type: 'add_element',
+      element: {
+        id: 'external-note-1',
+        kind: 'note',
+        x: 80,
+        y: 80,
+        width: 220,
+        height: 140,
+        text: 'External update'
+      }
+    });
+
+    expect(screen.getByText('External update')).toBeInTheDocument();
   });
 
   it('enables note text editing only after a second click', () => {

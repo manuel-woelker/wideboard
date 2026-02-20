@@ -158,6 +158,21 @@ function applyOrdering(order: string[], ids: string[], action: BoardOrderingActi
 type MutateState = (state: BoardState, deltas: BoardDelta[]) => void;
 
 /**
+ * Engine update payload emitted after each committed state mutation.
+ */
+export interface BoardEngineUpdate {
+  /** Revision after the commit. */
+  revision: BoardRevision;
+  /** Deltas emitted for this revision. */
+  deltas: BoardDelta[];
+}
+
+/**
+ * Listener function invoked when the engine commits a new revision.
+ */
+export type BoardEngineListener = (update: BoardEngineUpdate) => void;
+
+/**
  * Headless board state engine with deterministic reducers and revisioned deltas.
  */
 export class BoardEngine {
@@ -172,6 +187,8 @@ export class BoardEngine {
 
   /** Revision-ordered delta envelopes for incremental queries. */
   private readonly deltaHistory: BoardDeltaEnvelope[] = [];
+  /** Subscribers notified after each committed revision. */
+  private readonly listeners = new Set<BoardEngineListener>();
 
   public constructor(config: BoardEngineConfig = {}) {
     this.elementRegistry = config.elementRegistry ?? createDefaultBoardElementRegistry();
@@ -391,6 +408,32 @@ export class BoardEngine {
       zoom: this.state.viewport.zoom * zoomFactor,
       anchor: event.point
     });
+  }
+
+  /**
+   * Registers a listener for committed engine updates.
+   *
+   * Returns an unsubscribe function that removes the listener.
+   */
+  public subscribe(
+    listener: BoardEngineListener,
+    options: {
+      /** Emit the current revision immediately after subscription. */
+      emitCurrent?: boolean;
+    } = {}
+  ): () => void {
+    this.listeners.add(listener);
+
+    if (options.emitCurrent) {
+      listener({
+        revision: this.revision,
+        deltas: []
+      });
+    }
+
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /**
@@ -768,12 +811,24 @@ export class BoardEngine {
 
     this.revision += 1;
     this.state = nextState;
-    this.deltaHistory.push({
+    const envelope: BoardDeltaEnvelope = {
       revision: this.revision,
       deltas
-    });
+    };
+    this.deltaHistory.push(envelope);
+    this.notifyListeners(envelope);
 
     return this.revision;
+  }
+
+  /** Notifies subscribers after a revision commit. */
+  private notifyListeners(envelope: BoardDeltaEnvelope) {
+    this.listeners.forEach((listener) => {
+      listener({
+        revision: envelope.revision,
+        deltas: envelope.deltas
+      });
+    });
   }
 }
 

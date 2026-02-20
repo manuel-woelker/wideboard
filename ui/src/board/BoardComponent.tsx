@@ -20,6 +20,7 @@ export type { BoardElement, BoardImageElement as ImageElement, BoardNoteElement 
 export interface BoardComponentProps {
   boardId?: string;
   initialElements?: BoardElement[];
+  onEngineReady?: (engine: BoardEngine) => void;
 }
 
 const MIN_NOTE_SIZE: MinimumSize = {
@@ -59,6 +60,8 @@ class BoardRenderer {
 
   private readonly records = new Map<string, BoardRecord>();
   private renderedElementOrder: string[] = [];
+  private unsubscribeFromEngine: (() => void) | null = null;
+  private pendingSyncOptions: { resetEditing?: boolean } | null = null;
 
   private activeNoteId: string | null = null;
 
@@ -128,19 +131,43 @@ class BoardRenderer {
     this.host.addEventListener('drop', this.handleDrop);
     window.addEventListener('keydown', this.handleKeyDown);
 
+    this.unsubscribeFromEngine = this.engine.subscribe(
+      () => {
+        const options = this.pendingSyncOptions ?? {};
+        this.pendingSyncOptions = null;
+        this.syncFromEngineState(options);
+      },
+      {
+        emitCurrent: true
+      }
+    );
+
     const firstElementId = this.engine.getState().elementOrder[0];
     if (firstElementId) {
-      this.engine.dispatch({
+      this.dispatchAndSync({
         type: 'select',
         ids: [firstElementId]
       });
     }
-    this.syncFromEngineState();
   }
 
   private dispatchAndSync(command: BoardCommand, options: { resetEditing?: boolean } = {}) {
-    this.engine.dispatch(command);
-    this.syncFromEngineState(options);
+    this.runEngineMutation(() => this.engine.dispatch(command), options);
+  }
+
+  private runEngineMutation(
+    mutate: () => number,
+    options: { resetEditing?: boolean } = {}
+  ): boolean {
+    const previousRevision = this.engine.getRevision();
+    this.pendingSyncOptions = options;
+    const nextRevision = mutate();
+    const didMutate = nextRevision !== previousRevision;
+    if (!didMutate) {
+      this.pendingSyncOptions = null;
+    }
+
+    return didMutate;
   }
 
   private getEngineElementsInOrder() {
@@ -286,10 +313,17 @@ class BoardRenderer {
     this.host.removeEventListener('dragover', this.handleDragOver);
     this.host.removeEventListener('drop', this.handleDrop);
     window.removeEventListener('keydown', this.handleKeyDown);
+    this.unsubscribeFromEngine?.();
+    this.unsubscribeFromEngine = null;
+    this.pendingSyncOptions = null;
     this.records.clear();
     this.renderedElementOrder = [];
     this.selectionFrameNode.remove();
     this.host.replaceChildren();
+  }
+
+  public getEngine() {
+    return this.engine;
   }
 
   public createTextNoteAt(position: PointerDelta) {
@@ -1051,17 +1085,18 @@ class BoardRenderer {
     }
 
     event.preventDefault();
-    this.engine.handleKeyboard({
-      type: 'keyboard',
-      phase: 'down',
-      key: event.key,
-      code: event.code,
-      shiftKey: event.shiftKey,
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey
+    this.runEngineMutation(() => {
+      return this.engine.handleKeyboard({
+        type: 'keyboard',
+        phase: 'down',
+        key: event.key,
+        code: event.code,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey
+      });
     });
-    this.syncFromEngineState();
   };
 
   private handlePanStart = (event: PointerEvent) => {
@@ -1128,14 +1163,17 @@ class BoardRenderer {
       y: event.clientY - bounds.top
     };
 
-    this.engine.handleWheel({
-      type: 'wheel',
-      point: pointer,
-      deltaX: event.deltaX,
-      deltaY: event.deltaY
+    const didMutate = this.runEngineMutation(() => {
+      return this.engine.handleWheel({
+        type: 'wheel',
+        point: pointer,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY
+      });
     });
-    this.syncFromEngineState();
-    this.scheduleAutoFitAll();
+    if (didMutate) {
+      this.scheduleAutoFitAll();
+    }
   };
 
   public toBoardPosition(position: PointerDelta): PointerDelta {
@@ -1326,7 +1364,11 @@ class BoardRenderer {
   }
 }
 
-export function BoardComponent({ boardId = 'welcome', initialElements }: BoardComponentProps) {
+export function BoardComponent({
+  boardId = 'welcome',
+  initialElements,
+  onEngineReady
+}: BoardComponentProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
   const [isAddingNote, setIsAddingNote] = useState(false);
@@ -1342,12 +1384,13 @@ export function BoardComponent({ boardId = 'welcome', initialElements }: BoardCo
 
     const renderer = new BoardRenderer(host, elementSnapshotRef.current);
     rendererRef.current = renderer;
+    onEngineReady?.(renderer.getEngine());
 
     return () => {
       rendererRef.current = null;
       renderer.destroy();
     };
-  }, []);
+  }, [onEngineReady]);
 
   const noteCursor =
     'url(\'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="28" height="32" viewBox="0 0 28 32"%3E%3Cpath d="M4 1h20a3 3 0 0 1 3 3v15l-8 11H4a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="%23dff7ff" stroke="%23194467" stroke-width="2"/%3E%3Cpath d="M19 19h8l-8 11z" fill="%23b7dff7"/%3E%3C/svg%3E\') 4 2, crosshair';

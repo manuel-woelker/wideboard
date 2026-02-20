@@ -8,6 +8,10 @@ export interface ImageRecord {
   node: HTMLDivElement;
 }
 
+export interface ImageBoardCallbacks {
+  beginSelectionDrag: (event: PointerEvent, elementId: string) => void;
+}
+
 /* 📖 # Why keep image element rendering separate from notes?
 Image cards share board geometry behavior but do not need text editing or auto-fit logic.
 Splitting the module avoids adding note-specific behavior to image elements.
@@ -51,4 +55,25 @@ export function createImageRecord(
     model,
     node
   };
+}
+
+/**
+ * Creates and wires a board image element with image-specific interaction behavior.
+ */
+export function createBoardImageRecord(
+  element: ImageElement,
+  options: {
+    applyLayout: (node: HTMLElement, frame: ImageElement) => void;
+    callbacks: ImageBoardCallbacks;
+  }
+): ImageRecord {
+  const image = createImageRecord(element, {
+    applyLayout: options.applyLayout
+  });
+
+  image.node.addEventListener('pointerdown', (event) => {
+    options.callbacks.beginSelectionDrag(event, image.model.id);
+  });
+
+  return image;
 }

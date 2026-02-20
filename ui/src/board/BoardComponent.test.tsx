@@ -39,12 +39,7 @@ describe('BoardComponent', () => {
 
   it('updates board UI when external engine events dispatch mutations', () => {
     const onEngineReady = vi.fn<(engine: BoardEngine) => void>();
-    render(
-      <BoardComponent
-        initialElements={[baseNote]}
-        onEngineReady={onEngineReady}
-      />
-    );
+    render(<BoardComponent initialElements={[baseNote]} onEngineReady={onEngineReady} />);
 
     const engine = onEngineReady.mock.calls.at(0)?.[0];
     if (!engine) {

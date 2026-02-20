@@ -9,8 +9,8 @@ import {
   type PointerDelta,
   type ResizeHandlePosition
 } from './elementFrame';
-import { createImageRecord, type ImageElement, type ImageRecord } from './imageElement';
-import { createNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
+import { createBoardImageRecord, type ImageElement, type ImageRecord } from './imageElement';
+import { createBoardNoteRecord, type NoteElement, type NoteRecord } from './noteElement';
 import { WIDEBOARD_NOTE_CLIPBOARD_MIME } from './engine/boardEvents';
 import type { BoardElement, BoardImageElement, BoardNoteElement } from './engine/boardEngineTypes';
 import { BoardEngine } from './engine/BoardEngine';
@@ -1263,66 +1263,65 @@ class BoardRenderer {
     );
   }
 
+  private getSelectionIds() {
+    return [...this.engine.getState().selection];
+  }
+
+  private commitNoteText(noteId: string, text: string) {
+    const nextElements = this.getEngineElementsInOrder().map((engineElement) => {
+      if (engineElement.id !== noteId || engineElement.kind !== 'note') {
+        return engineElement;
+      }
+
+      return {
+        ...engineElement,
+        text
+      };
+    });
+    this.dispatchAndSync({
+      type: 'set_elements',
+      elements: nextElements
+    });
+  }
+
+  private enableNoteEditing(
+    note: NoteRecord,
+    options: {
+      caretClientPoint?: {
+        x: number;
+        y: number;
+      };
+    } = {}
+  ) {
+    note.setEditingEnabled(true);
+    note.editor.focus();
+    if (options.caretClientPoint) {
+      this.placeCaretAtClientPoint(
+        note.editor,
+        options.caretClientPoint.x,
+        options.caretClientPoint.y
+      );
+    }
+  }
+
   private createNote(element: NoteElement): BoardRecord {
-    const note = createNoteRecord(element, {
+    const note = createBoardNoteRecord(element, {
       applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
-      enableDrag: false
-    });
-    note.node.addEventListener('pointerdown', (event) => {
-      const selection = this.engine.getState().selection;
-      const wasSingleSelected = selection.length === 1 && selection[0] === note.model.id;
-      if (
-        note.editor.isContentEditable &&
-        event.target instanceof Node &&
-        note.editor.contains(event.target)
-      ) {
-        this.setSelectionPreservingEditing([note.model.id], note.model.id);
-        return;
-      }
-
-      this.beginSelectionDrag(event, note.model.id, {
-        enableEditingOnTap: wasSingleSelected
-          ? (tapEvent) => {
-              const currentSelection = this.engine.getState().selection;
-              if (!currentSelection.includes(note.model.id) || currentSelection.length !== 1) {
-                return;
-              }
-
-              note.setEditingEnabled(true);
-              note.editor.focus();
-              this.placeCaretAtClientPoint(note.editor, tapEvent.clientX, tapEvent.clientY);
-            }
-          : undefined
-      });
-    });
-    note.node.addEventListener('dblclick', (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-
-      const selection = this.engine.getState().selection;
-      if (!selection.includes(note.model.id) || selection.length !== 1) {
-        return;
-      }
-
-      note.setEditingEnabled(true);
-      note.editor.focus();
-    });
-    note.editor.addEventListener('input', () => {
-      const nextElements = this.getEngineElementsInOrder().map((engineElement) => {
-        if (engineElement.id !== note.model.id || engineElement.kind !== 'note') {
-          return engineElement;
+      callbacks: {
+        getSelection: () => this.getSelectionIds(),
+        setSelectionPreservingEditing: (ids, preferredActiveNoteId) => {
+          this.setSelectionPreservingEditing(ids, preferredActiveNoteId);
+        },
+        beginSelectionDrag: (event, noteId, options) => {
+          this.beginSelectionDrag(event, noteId, options);
+        },
+        enableEditing: (noteRecord, options) => {
+          this.enableNoteEditing(noteRecord, options);
+        },
+        updateNoteText: (noteId, text) => {
+          this.commitNoteText(noteId, text);
         }
-
-        return {
-          ...engineElement,
-          text: note.model.text
-        };
-      });
-      this.dispatchAndSync({
-        type: 'set_elements',
-        elements: nextElements
-      });
+      }
     });
 
     const record: BoardRecord = {
@@ -1340,12 +1339,13 @@ class BoardRenderer {
   }
 
   private createImage(element: ImageElement): BoardRecord {
-    const image = createImageRecord(element, {
-      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame)
-    });
-
-    image.node.addEventListener('pointerdown', (event) => {
-      this.beginSelectionDrag(event, image.model.id);
+    const image = createBoardImageRecord(element, {
+      applyLayout: (node, frame) => this.applyFrameWithPan(node, frame),
+      callbacks: {
+        beginSelectionDrag: (event, elementId) => {
+          this.beginSelectionDrag(event, elementId);
+        }
+      }
     });
 
     const record: BoardRecord = {

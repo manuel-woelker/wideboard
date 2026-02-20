@@ -12,6 +12,30 @@ export interface NoteRecord {
   setEditingEnabled: (enabled: boolean) => void;
 }
 
+export interface NoteSelectionDragOptions {
+  enableEditingOnTap?: (tapEvent: PointerEvent) => void;
+}
+
+export interface NoteBoardCallbacks {
+  getSelection: () => string[];
+  setSelectionPreservingEditing: (ids: string[], preferredActiveNoteId: string) => void;
+  beginSelectionDrag: (
+    event: PointerEvent,
+    noteId: string,
+    options?: NoteSelectionDragOptions
+  ) => void;
+  enableEditing: (
+    note: NoteRecord,
+    options?: {
+      caretClientPoint?: {
+        x: number;
+        y: number;
+      };
+    }
+  ) => void;
+  updateNoteText: (noteId: string, text: string) => void;
+}
+
 const AUTO_FIT_MIN_SIZE = 12;
 const AUTO_FIT_ITERATIONS = 8;
 
@@ -225,6 +249,73 @@ export function createNoteRecord(
 
   node.append(editor);
   return record;
+}
+
+/**
+ * Creates and wires a board note element with note-specific interaction behavior.
+ */
+export function createBoardNoteRecord(
+  element: NoteElement,
+  options: {
+    applyLayout: (node: HTMLElement, frame: NoteElement) => void;
+    callbacks: NoteBoardCallbacks;
+  }
+): NoteRecord {
+  const note = createNoteRecord(element, {
+    applyLayout: options.applyLayout,
+    enableDrag: false
+  });
+
+  note.node.addEventListener('pointerdown', (event) => {
+    const selection = options.callbacks.getSelection();
+    const wasSingleSelected = selection.length === 1 && selection[0] === note.model.id;
+
+    if (
+      note.editor.isContentEditable &&
+      event.target instanceof Node &&
+      note.editor.contains(event.target)
+    ) {
+      options.callbacks.setSelectionPreservingEditing([note.model.id], note.model.id);
+      return;
+    }
+
+    options.callbacks.beginSelectionDrag(event, note.model.id, {
+      enableEditingOnTap: wasSingleSelected
+        ? (tapEvent) => {
+            const currentSelection = options.callbacks.getSelection();
+            if (!currentSelection.includes(note.model.id) || currentSelection.length !== 1) {
+              return;
+            }
+
+            options.callbacks.enableEditing(note, {
+              caretClientPoint: {
+                x: tapEvent.clientX,
+                y: tapEvent.clientY
+              }
+            });
+          }
+        : undefined
+    });
+  });
+
+  note.node.addEventListener('dblclick', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const selection = options.callbacks.getSelection();
+    if (!selection.includes(note.model.id) || selection.length !== 1) {
+      return;
+    }
+
+    options.callbacks.enableEditing(note);
+  });
+
+  note.editor.addEventListener('input', () => {
+    options.callbacks.updateNoteText(note.model.id, note.model.text);
+  });
+
+  return note;
 }
 
 if (import.meta.vitest) {

@@ -156,6 +156,15 @@ function applyOrdering(order: string[], ids: string[], action: BoardOrderingActi
 }
 
 type MutateState = (state: BoardState, deltas: BoardDelta[]) => void;
+type CommandType = BoardCommand['type'];
+type CommandHandler<TType extends CommandType> = (
+  state: BoardState,
+  deltas: BoardDelta[],
+  command: Extract<BoardCommand, { type: TType }>
+) => void;
+type CommandHandlerMap = {
+  [TType in CommandType]: CommandHandler<TType>;
+};
 
 /**
  * Engine update payload emitted after each committed state mutation.
@@ -189,10 +198,13 @@ export class BoardEngine {
   private readonly deltaHistory: BoardDeltaEnvelope[] = [];
   /** Subscribers notified after each committed revision. */
   private readonly listeners = new Set<BoardEngineListener>();
+  /** Command dispatch table mapped by command type. */
+  private readonly commandHandlers: CommandHandlerMap;
 
   public constructor(config: BoardEngineConfig = {}) {
     this.elementRegistry = config.elementRegistry ?? createDefaultBoardElementRegistry();
     this.state = createInitialState(config, this.elementRegistry);
+    this.commandHandlers = this.createCommandHandlers();
   }
 
   /**
@@ -441,334 +453,391 @@ export class BoardEngine {
    */
   public dispatch(command: BoardCommand): BoardRevision {
     return this.commit((state, deltas) => {
-      if (command.type === 'set_elements') {
-        command.elements.forEach((element) => {
-          this.elementRegistry.assertKnownKind(element.kind);
+      const handler = this.commandHandlers[command.type] as CommandHandler<CommandType>;
+      handler(state, deltas, command as Extract<BoardCommand, { type: CommandType }>);
+    });
+  }
+
+  /** Builds the board command dispatch table. */
+  private createCommandHandlers(): CommandHandlerMap {
+    return {
+      set_elements: (state, deltas, command) =>
+        this.handleSetElementsCommand(state, deltas, command),
+      add_element: (state, deltas, command) => this.handleAddElementCommand(state, deltas, command),
+      remove_elements: (state, deltas, command) =>
+        this.handleRemoveElementsCommand(state, deltas, command),
+      select: (state, deltas, command) => this.handleSelectCommand(state, deltas, command),
+      clear_selection: (state, deltas) => this.handleClearSelectionCommand(state, deltas),
+      move_selection: (state, deltas, command) =>
+        this.handleMoveSelectionCommand(state, deltas, command),
+      move_elements: (state, deltas, command) =>
+        this.handleMoveElementsCommand(state, deltas, command),
+      set_viewport: (state, deltas, command) =>
+        this.handleSetViewportCommand(state, deltas, command),
+      pan_viewport: (state, deltas, command) =>
+        this.handlePanViewportCommand(state, deltas, command),
+      zoom_viewport: (state, deltas, command) =>
+        this.handleZoomViewportCommand(state, deltas, command),
+      order_selection: (state, deltas, command) =>
+        this.handleOrderSelectionCommand(state, deltas, command)
+    };
+  }
+
+  private handleSetElementsCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'set_elements' }>
+  ) {
+    command.elements.forEach((element) => {
+      this.elementRegistry.assertKnownKind(element.kind);
+    });
+    const next = createElementState(command.elements, this.elementRegistry);
+    const previousState = cloneState(state);
+    state.elements = next.elements;
+    state.elementOrder = next.elementOrder;
+    state.selection = normalizeElementIds(state.selection, state);
+
+    previousState.elementOrder.forEach((id, index) => {
+      const previous = previousState.elements[id];
+      if (!next.elements[id]) {
+        deltas.push({
+          type: 'element_removed',
+          element: previous,
+          index
         });
-        const next = createElementState(command.elements, this.elementRegistry);
-        const previousState = cloneState(state);
-        state.elements = next.elements;
-        state.elementOrder = next.elementOrder;
-        state.selection = normalizeElementIds(state.selection, state);
-
-        previousState.elementOrder.forEach((id, index) => {
-          const previous = previousState.elements[id];
-          if (!next.elements[id]) {
-            deltas.push({
-              type: 'element_removed',
-              element: previous,
-              index
-            });
-          }
-        });
-
-        state.elementOrder.forEach((id, index) => {
-          const current = state.elements[id];
-          const previous = previousState.elements[id];
-          if (!previous) {
-            deltas.push({
-              type: 'element_added',
-              element: cloneElement(current),
-              index
-            });
-            return;
-          }
-
-          if (
-            previous.x !== current.x ||
-            previous.y !== current.y ||
-            previous.width !== current.width ||
-            previous.height !== current.height ||
-            JSON.stringify(previous) !== JSON.stringify(current)
-          ) {
-            deltas.push({
-              type: 'element_updated',
-              id,
-              previous,
-              current: cloneElement(current),
-              previousIndex: previousState.elementOrder.indexOf(id),
-              currentIndex: index
-            });
-          } else if (previousState.elementOrder.indexOf(id) !== index) {
-            deltas.push({
-              type: 'element_updated',
-              id,
-              previous,
-              current: cloneElement(current),
-              previousIndex: previousState.elementOrder.indexOf(id),
-              currentIndex: index
-            });
-          }
-        });
-
-        if (!areStringListsEqual(previousState.selection, state.selection)) {
-          deltas.push({
-            type: 'selection_changed',
-            previous: previousState.selection,
-            current: [...state.selection]
-          });
-        }
-        return;
       }
+    });
 
-      if (command.type === 'add_element') {
-        this.elementRegistry.assertKnownKind(command.element.kind);
-        if (state.elements[command.element.id]) {
-          return;
-        }
-
-        const index =
-          typeof command.index === 'number'
-            ? Math.max(0, Math.min(command.index, state.elementOrder.length))
-            : state.elementOrder.length;
-
-        state.elements[command.element.id] = cloneElement(command.element);
-        state.elementOrder.splice(index, 0, command.element.id);
-
+    state.elementOrder.forEach((id, index) => {
+      const current = state.elements[id];
+      const previous = previousState.elements[id];
+      if (!previous) {
         deltas.push({
           type: 'element_added',
-          element: cloneElement(command.element),
+          element: cloneElement(current),
           index
         });
         return;
       }
 
-      if (command.type === 'remove_elements') {
-        const ids = normalizeElementIds(command.ids, state);
-        if (ids.length === 0) {
-          return;
-        }
-
-        const selectedSet = new Set(state.selection);
-        ids.forEach((id) => {
-          const element = state.elements[id];
-          if (!element) {
-            return;
-          }
-
-          const index = state.elementOrder.indexOf(id);
-          delete state.elements[id];
-          if (index !== -1) {
-            state.elementOrder.splice(index, 1);
-          }
-
-          deltas.push({
-            type: 'element_removed',
-            element: cloneElement(element),
-            index
-          });
-          selectedSet.delete(id);
-        });
-
-        const nextSelection = normalizeElementIds(Array.from(selectedSet), state);
-        if (!areStringListsEqual(state.selection, nextSelection)) {
-          const previousSelection = [...state.selection];
-          state.selection = nextSelection;
-          deltas.push({
-            type: 'selection_changed',
-            previous: previousSelection,
-            current: [...state.selection]
-          });
-        }
-
-        return;
-      }
-
-      if (command.type === 'select') {
-        const previousSelection = [...state.selection];
-        const sourceIds = normalizeElementIds(command.ids, state);
-        const sourceSet = new Set(sourceIds);
-        const currentSet = new Set(state.selection);
-        let nextSelection: string[] = [];
-        const mode = command.mode ?? 'replace';
-
-        if (mode === 'replace') {
-          nextSelection = sourceIds;
-        } else if (mode === 'add') {
-          nextSelection = normalizeElementIds([...state.selection, ...sourceIds], state);
-        } else if (mode === 'remove') {
-          nextSelection = state.selection.filter((id) => !sourceSet.has(id));
-        } else {
-          nextSelection = normalizeElementIds(
-            [
-              ...state.selection.filter((id) => !sourceSet.has(id)),
-              ...sourceIds.filter((id) => !currentSet.has(id))
-            ],
-            state
-          );
-        }
-
-        if (areStringListsEqual(previousSelection, nextSelection)) {
-          return;
-        }
-
-        state.selection = nextSelection;
+      if (
+        previous.x !== current.x ||
+        previous.y !== current.y ||
+        previous.width !== current.width ||
+        previous.height !== current.height ||
+        JSON.stringify(previous) !== JSON.stringify(current)
+      ) {
         deltas.push({
-          type: 'selection_changed',
-          previous: previousSelection,
-          current: [...state.selection]
+          type: 'element_updated',
+          id,
+          previous,
+          current: cloneElement(current),
+          previousIndex: previousState.elementOrder.indexOf(id),
+          currentIndex: index
         });
-        return;
-      }
-
-      if (command.type === 'clear_selection') {
-        if (state.selection.length === 0) {
-          return;
-        }
-
-        const previousSelection = [...state.selection];
-        state.selection = [];
+      } else if (previousState.elementOrder.indexOf(id) !== index) {
         deltas.push({
-          type: 'selection_changed',
-          previous: previousSelection,
-          current: []
+          type: 'element_updated',
+          id,
+          previous,
+          current: cloneElement(current),
+          previousIndex: previousState.elementOrder.indexOf(id),
+          currentIndex: index
         });
+      }
+    });
+
+    if (!areStringListsEqual(previousState.selection, state.selection)) {
+      deltas.push({
+        type: 'selection_changed',
+        previous: previousState.selection,
+        current: [...state.selection]
+      });
+    }
+  }
+
+  private handleAddElementCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'add_element' }>
+  ) {
+    this.elementRegistry.assertKnownKind(command.element.kind);
+    if (state.elements[command.element.id]) {
+      return;
+    }
+
+    const index =
+      typeof command.index === 'number'
+        ? Math.max(0, Math.min(command.index, state.elementOrder.length))
+        : state.elementOrder.length;
+
+    state.elements[command.element.id] = cloneElement(command.element);
+    state.elementOrder.splice(index, 0, command.element.id);
+
+    deltas.push({
+      type: 'element_added',
+      element: cloneElement(command.element),
+      index
+    });
+  }
+
+  private handleRemoveElementsCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'remove_elements' }>
+  ) {
+    const ids = normalizeElementIds(command.ids, state);
+    if (ids.length === 0) {
+      return;
+    }
+
+    const selectedSet = new Set(state.selection);
+    ids.forEach((id) => {
+      const element = state.elements[id];
+      if (!element) {
         return;
       }
 
-      if (command.type === 'move_selection') {
-        if (command.delta.x === 0 && command.delta.y === 0) {
-          return;
-        }
+      const index = state.elementOrder.indexOf(id);
+      delete state.elements[id];
+      if (index !== -1) {
+        state.elementOrder.splice(index, 1);
+      }
 
-        normalizeElementIds(state.selection, state).forEach((id) => {
-          const previous = cloneElement(state.elements[id]);
-          const current = this.elementRegistry.reduce(state.elements[id], {
-            type: 'translate',
-            delta: command.delta
-          });
-          state.elements[id] = current;
-          deltas.push({
-            type: 'element_updated',
-            id,
-            previous,
-            current: cloneElement(current)
-          });
-        });
+      deltas.push({
+        type: 'element_removed',
+        element: cloneElement(element),
+        index
+      });
+      selectedSet.delete(id);
+    });
+
+    const nextSelection = normalizeElementIds(Array.from(selectedSet), state);
+    if (!areStringListsEqual(state.selection, nextSelection)) {
+      const previousSelection = [...state.selection];
+      state.selection = nextSelection;
+      deltas.push({
+        type: 'selection_changed',
+        previous: previousSelection,
+        current: [...state.selection]
+      });
+    }
+  }
+
+  private handleSelectCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'select' }>
+  ) {
+    const previousSelection = [...state.selection];
+    const sourceIds = normalizeElementIds(command.ids, state);
+    const sourceSet = new Set(sourceIds);
+    const currentSet = new Set(state.selection);
+    let nextSelection: string[] = [];
+    const mode = command.mode ?? 'replace';
+
+    if (mode === 'replace') {
+      nextSelection = sourceIds;
+    } else if (mode === 'add') {
+      nextSelection = normalizeElementIds([...state.selection, ...sourceIds], state);
+    } else if (mode === 'remove') {
+      nextSelection = state.selection.filter((id) => !sourceSet.has(id));
+    } else {
+      nextSelection = normalizeElementIds(
+        [
+          ...state.selection.filter((id) => !sourceSet.has(id)),
+          ...sourceIds.filter((id) => !currentSet.has(id))
+        ],
+        state
+      );
+    }
+
+    if (areStringListsEqual(previousSelection, nextSelection)) {
+      return;
+    }
+
+    state.selection = nextSelection;
+    deltas.push({
+      type: 'selection_changed',
+      previous: previousSelection,
+      current: [...state.selection]
+    });
+  }
+
+  private handleClearSelectionCommand(state: BoardState, deltas: BoardDelta[]) {
+    if (state.selection.length === 0) {
+      return;
+    }
+
+    const previousSelection = [...state.selection];
+    state.selection = [];
+    deltas.push({
+      type: 'selection_changed',
+      previous: previousSelection,
+      current: []
+    });
+  }
+
+  private handleMoveSelectionCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'move_selection' }>
+  ) {
+    if (command.delta.x === 0 && command.delta.y === 0) {
+      return;
+    }
+
+    normalizeElementIds(state.selection, state).forEach((id) => {
+      const previous = cloneElement(state.elements[id]);
+      const current = this.elementRegistry.reduce(state.elements[id], {
+        type: 'translate',
+        delta: command.delta
+      });
+      state.elements[id] = current;
+      deltas.push({
+        type: 'element_updated',
+        id,
+        previous,
+        current: cloneElement(current)
+      });
+    });
+  }
+
+  private handleMoveElementsCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'move_elements' }>
+  ) {
+    if (command.delta.x === 0 && command.delta.y === 0) {
+      return;
+    }
+
+    normalizeElementIds(command.ids, state).forEach((id) => {
+      const previous = cloneElement(state.elements[id]);
+      const current = this.elementRegistry.reduce(state.elements[id], {
+        type: 'translate',
+        delta: command.delta
+      });
+      state.elements[id] = current;
+      deltas.push({
+        type: 'element_updated',
+        id,
+        previous,
+        current: cloneElement(current)
+      });
+    });
+  }
+
+  private handleSetViewportCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'set_viewport' }>
+  ) {
+    const previousViewport = { ...state.viewport };
+    const nextZoom =
+      typeof command.zoom === 'number' ? clampZoom(command.zoom) : state.viewport.zoom;
+    state.viewport = {
+      panX: command.panX,
+      panY: command.panY,
+      zoom: nextZoom
+    };
+
+    if (
+      previousViewport.panX !== state.viewport.panX ||
+      previousViewport.panY !== state.viewport.panY ||
+      previousViewport.zoom !== state.viewport.zoom
+    ) {
+      deltas.push({
+        type: 'viewport_changed',
+        previous: previousViewport,
+        current: { ...state.viewport }
+      });
+    }
+  }
+
+  private handlePanViewportCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'pan_viewport' }>
+  ) {
+    if (command.delta.x === 0 && command.delta.y === 0) {
+      return;
+    }
+
+    const previousViewport = { ...state.viewport };
+    state.viewport = {
+      ...state.viewport,
+      panX: state.viewport.panX + command.delta.x,
+      panY: state.viewport.panY + command.delta.y
+    };
+    deltas.push({
+      type: 'viewport_changed',
+      previous: previousViewport,
+      current: { ...state.viewport }
+    });
+  }
+
+  private handleZoomViewportCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'zoom_viewport' }>
+  ) {
+    const nextZoom = clampZoom(command.zoom);
+    if (nextZoom === state.viewport.zoom) {
+      return;
+    }
+
+    const previousViewport = { ...state.viewport };
+    let nextPanX = state.viewport.panX;
+    let nextPanY = state.viewport.panY;
+
+    if (command.anchor) {
+      const worldX = command.anchor.x / state.viewport.zoom - state.viewport.panX;
+      const worldY = command.anchor.y / state.viewport.zoom - state.viewport.panY;
+      nextPanX = command.anchor.x / nextZoom - worldX;
+      nextPanY = command.anchor.y / nextZoom - worldY;
+    }
+
+    state.viewport = {
+      panX: nextPanX,
+      panY: nextPanY,
+      zoom: nextZoom
+    };
+    deltas.push({
+      type: 'viewport_changed',
+      previous: previousViewport,
+      current: { ...state.viewport }
+    });
+  }
+
+  private handleOrderSelectionCommand(
+    state: BoardState,
+    deltas: BoardDelta[],
+    command: Extract<BoardCommand, { type: 'order_selection' }>
+  ) {
+    const selectedIds = normalizeElementIds(state.selection, state);
+    const previousOrder = [...state.elementOrder];
+    const nextOrder = applyOrdering(state.elementOrder, selectedIds, command.action);
+    if (areStringListsEqual(previousOrder, nextOrder)) {
+      return;
+    }
+
+    state.elementOrder = nextOrder;
+    nextOrder.forEach((id, index) => {
+      const previousIndex = previousOrder.indexOf(id);
+      if (previousIndex === index) {
         return;
       }
 
-      if (command.type === 'move_elements') {
-        if (command.delta.x === 0 && command.delta.y === 0) {
-          return;
-        }
-
-        normalizeElementIds(command.ids, state).forEach((id) => {
-          const previous = cloneElement(state.elements[id]);
-          const current = this.elementRegistry.reduce(state.elements[id], {
-            type: 'translate',
-            delta: command.delta
-          });
-          state.elements[id] = current;
-          deltas.push({
-            type: 'element_updated',
-            id,
-            previous,
-            current: cloneElement(current)
-          });
-        });
-        return;
-      }
-
-      if (command.type === 'set_viewport') {
-        const previousViewport = { ...state.viewport };
-        const nextZoom =
-          typeof command.zoom === 'number' ? clampZoom(command.zoom) : state.viewport.zoom;
-        state.viewport = {
-          panX: command.panX,
-          panY: command.panY,
-          zoom: nextZoom
-        };
-
-        if (
-          previousViewport.panX !== state.viewport.panX ||
-          previousViewport.panY !== state.viewport.panY ||
-          previousViewport.zoom !== state.viewport.zoom
-        ) {
-          deltas.push({
-            type: 'viewport_changed',
-            previous: previousViewport,
-            current: { ...state.viewport }
-          });
-        }
-        return;
-      }
-
-      if (command.type === 'pan_viewport') {
-        if (command.delta.x === 0 && command.delta.y === 0) {
-          return;
-        }
-
-        const previousViewport = { ...state.viewport };
-        state.viewport = {
-          ...state.viewport,
-          panX: state.viewport.panX + command.delta.x,
-          panY: state.viewport.panY + command.delta.y
-        };
-        deltas.push({
-          type: 'viewport_changed',
-          previous: previousViewport,
-          current: { ...state.viewport }
-        });
-        return;
-      }
-
-      if (command.type === 'zoom_viewport') {
-        const nextZoom = clampZoom(command.zoom);
-        if (nextZoom === state.viewport.zoom) {
-          return;
-        }
-
-        const previousViewport = { ...state.viewport };
-        let nextPanX = state.viewport.panX;
-        let nextPanY = state.viewport.panY;
-
-        if (command.anchor) {
-          const worldX = command.anchor.x / state.viewport.zoom - state.viewport.panX;
-          const worldY = command.anchor.y / state.viewport.zoom - state.viewport.panY;
-          nextPanX = command.anchor.x / nextZoom - worldX;
-          nextPanY = command.anchor.y / nextZoom - worldY;
-        }
-
-        state.viewport = {
-          panX: nextPanX,
-          panY: nextPanY,
-          zoom: nextZoom
-        };
-        deltas.push({
-          type: 'viewport_changed',
-          previous: previousViewport,
-          current: { ...state.viewport }
-        });
-        return;
-      }
-
-      const selectedIds = normalizeElementIds(state.selection, state);
-      if (command.type === 'order_selection') {
-        const previousOrder = [...state.elementOrder];
-        const nextOrder = applyOrdering(state.elementOrder, selectedIds, command.action);
-        if (areStringListsEqual(previousOrder, nextOrder)) {
-          return;
-        }
-
-        state.elementOrder = nextOrder;
-        nextOrder.forEach((id, index) => {
-          const previousIndex = previousOrder.indexOf(id);
-          if (previousIndex === index) {
-            return;
-          }
-
-          const element = state.elements[id];
-          deltas.push({
-            type: 'element_updated',
-            id,
-            previous: cloneElement(element),
-            current: cloneElement(element),
-            previousIndex,
-            currentIndex: index
-          });
-        });
-      }
+      const element = state.elements[id];
+      deltas.push({
+        type: 'element_updated',
+        id,
+        previous: cloneElement(element),
+        current: cloneElement(element),
+        previousIndex,
+        currentIndex: index
+      });
     });
   }
 

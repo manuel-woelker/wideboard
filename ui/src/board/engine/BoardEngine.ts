@@ -8,6 +8,7 @@ import type {
 } from './boardEvents';
 import type { BoardDelta, BoardDeltaBatch, BoardDeltaEnvelope, BoardRevision } from './boardDeltas';
 import type { BoardElement, BoardEngineConfig, BoardState } from './boardEngineTypes';
+import { createBoardEngineTestHarness } from './boardEngineTestHarness';
 import { createDefaultBoardElementRegistry, type BoardElementRegistry } from './elementRegistry';
 
 const MIN_ZOOM = 0.4;
@@ -965,156 +966,445 @@ if (import.meta.vitest) {
 
   describe('BoardEngine', () => {
     it('initializes with revision 0 and deterministic state', () => {
-      const engine = new BoardEngine({
+      createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: (engine) => {
+          expect(engine.getRevision()).toBe(0);
+          expect(engine.getState().elementOrder).toEqual(['note-1', 'image-1']);
+          expect(engine.getState().selection).toEqual([]);
+        },
+        act: () => {},
+        assert: {
+          events: [],
+          stateDiff: []
+        }
       });
-
-      expect(engine.getRevision()).toBe(0);
-      expect(engine.getState().elementOrder).toEqual(['note-1', 'image-1']);
-      expect(engine.getState().selection).toEqual([]);
     });
 
     it('selects and moves elements via commands with emitted deltas', () => {
-      const engine = new BoardEngine({
+      const actual = createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: (engine) => {
+          engine.dispatch.select({
+            ids: ['note-1']
+          });
+        },
+        act: (engine) => {
+          engine.dispatch.moveSelection({
+            delta: { x: 15, y: -5 }
+          });
+        },
+        assert: {
+          events: [
+            {
+              revision: 2,
+              deltas: [
+                {
+                  type: 'element_updated',
+                  id: 'note-1',
+                  previous: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  },
+                  current: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 25,
+                    y: 15,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  }
+                }
+              ]
+            }
+          ],
+          stateDiff: [
+            {
+              op: 'replace',
+              path: '/elements/note-1/x',
+              value: 25
+            },
+            {
+              op: 'replace',
+              path: '/elements/note-1/y',
+              value: 15
+            }
+          ]
+        }
       });
 
-      const revision1 = engine.dispatch.select({
-        ids: ['note-1']
-      });
-      const revision2 = engine.dispatch.moveSelection({
-        delta: { x: 15, y: -5 }
-      });
-
-      expect(revision1).toBe(1);
-      expect(revision2).toBe(2);
-      expect(engine.getState().elements['note-1'].x).toBe(25);
-      expect(engine.getState().elements['note-1'].y).toBe(15);
-
-      const deltas = engine.getDeltasSince(0);
-      expect(deltas.batches).toHaveLength(2);
-      expect(deltas.batches[0].deltas[0]?.type).toBe('selection_changed');
-      expect(deltas.batches[1].deltas[0]?.type).toBe('element_updated');
+      expect(actual.events).toHaveLength(1);
     });
 
     it('handles pointer drag lifecycle and updates interaction state', () => {
-      const engine = new BoardEngine({
+      createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: (engine) => {
+          engine.dispatch.select({
+            ids: ['note-1']
+          });
+        },
+        act: (engine) => {
+          engine.handlePointer({
+            type: 'pointer',
+            phase: 'down',
+            point: { x: 10, y: 20 },
+            button: 0,
+            buttons: 1,
+            pointerId: 5,
+            shiftKey: false,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false,
+            targetElementId: 'note-1'
+          });
+          engine.handlePointer({
+            type: 'pointer',
+            phase: 'move',
+            point: { x: 30, y: 45 },
+            button: 0,
+            buttons: 1,
+            pointerId: 5,
+            shiftKey: false,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false
+          });
+          engine.handlePointer({
+            type: 'pointer',
+            phase: 'up',
+            point: { x: 30, y: 45 },
+            button: 0,
+            buttons: 0,
+            pointerId: 5,
+            shiftKey: false,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false
+          });
+        },
+        assert: {
+          events: [
+            {
+              revision: 2,
+              deltas: [
+                {
+                  type: 'interaction_changed',
+                  previous: {
+                    mode: 'idle'
+                  },
+                  current: {
+                    mode: 'dragging_selection'
+                  }
+                }
+              ]
+            },
+            {
+              revision: 3,
+              deltas: [
+                {
+                  type: 'element_updated',
+                  id: 'note-1',
+                  previous: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  },
+                  current: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 30,
+                    y: 45,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  }
+                }
+              ]
+            },
+            {
+              revision: 4,
+              deltas: [
+                {
+                  type: 'interaction_changed',
+                  previous: {
+                    mode: 'dragging_selection'
+                  },
+                  current: {
+                    mode: 'idle'
+                  }
+                }
+              ]
+            }
+          ],
+          stateDiff: [
+            {
+              op: 'replace',
+              path: '/elements/note-1/x',
+              value: 30
+            },
+            {
+              op: 'replace',
+              path: '/elements/note-1/y',
+              value: 45
+            }
+          ]
+        }
       });
-
-      engine.handlePointer({
-        type: 'pointer',
-        phase: 'down',
-        point: { x: 10, y: 20 },
-        button: 0,
-        buttons: 1,
-        pointerId: 5,
-        shiftKey: false,
-        altKey: false,
-        ctrlKey: false,
-        metaKey: false,
-        targetElementId: 'note-1'
-      });
-      engine.handlePointer({
-        type: 'pointer',
-        phase: 'move',
-        point: { x: 30, y: 45 },
-        button: 0,
-        buttons: 1,
-        pointerId: 5,
-        shiftKey: false,
-        altKey: false,
-        ctrlKey: false,
-        metaKey: false
-      });
-      engine.handlePointer({
-        type: 'pointer',
-        phase: 'up',
-        point: { x: 30, y: 45 },
-        button: 0,
-        buttons: 0,
-        pointerId: 5,
-        shiftKey: false,
-        altKey: false,
-        ctrlKey: false,
-        metaKey: false
-      });
-
-      expect(engine.getState().elements['note-1'].x).toBe(30);
-      expect(engine.getState().elements['note-1'].y).toBe(45);
-      expect(engine.getState().interaction.mode).toBe('idle');
-      expect(engine.getRevision()).toBe(3);
     });
 
     it('updates viewport from wheel and pan commands with deltas', () => {
-      const engine = new BoardEngine({
+      const expectedZoom = Math.exp(0.18);
+      const expectedPanAfterZoom = 100 / expectedZoom - 100;
+      createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: () => {},
+        act: (engine) => {
+          engine.handleWheel({
+            type: 'wheel',
+            point: { x: 100, y: 100 },
+            deltaX: 0,
+            deltaY: -120
+          });
+          engine.dispatch.panViewport({
+            delta: { x: 20, y: -10 }
+          });
+        },
+        assert: {
+          events: [
+            {
+              revision: 1,
+              deltas: [
+                {
+                  type: 'viewport_changed',
+                  previous: {
+                    panX: 0,
+                    panY: 0,
+                    zoom: 1
+                  },
+                  current: {
+                    panX: expectedPanAfterZoom,
+                    panY: expectedPanAfterZoom,
+                    zoom: expectedZoom
+                  }
+                }
+              ]
+            },
+            {
+              revision: 2,
+              deltas: [
+                {
+                  type: 'viewport_changed',
+                  previous: {
+                    panX: expectedPanAfterZoom,
+                    panY: expectedPanAfterZoom,
+                    zoom: expectedZoom
+                  },
+                  current: {
+                    panX: expectedPanAfterZoom + 20,
+                    panY: expectedPanAfterZoom - 10,
+                    zoom: expectedZoom
+                  }
+                }
+              ]
+            }
+          ],
+          stateDiff: [
+            {
+              op: 'replace',
+              path: '/viewport/panX',
+              value: expectedPanAfterZoom + 20
+            },
+            {
+              op: 'replace',
+              path: '/viewport/panY',
+              value: expectedPanAfterZoom - 10
+            },
+            {
+              op: 'replace',
+              path: '/viewport/zoom',
+              value: expectedZoom
+            }
+          ]
+        }
       });
-
-      engine.handleWheel({
-        type: 'wheel',
-        point: { x: 100, y: 100 },
-        deltaX: 0,
-        deltaY: -120
-      });
-      engine.dispatch.panViewport({
-        delta: { x: 20, y: -10 }
-      });
-
-      expect(engine.getState().viewport.zoom).toBeGreaterThan(1);
-      expect(engine.getState().viewport.panX).not.toBe(0);
-      expect(engine.getState().viewport.panY).not.toBe(0);
-
-      const viewportDeltaCount = engine
-        .getDeltasSince(0)
-        .batches.flatMap((batch) => batch.deltas)
-        .filter((delta) => delta.type === 'viewport_changed').length;
-      expect(viewportDeltaCount).toBe(2);
     });
 
     it('applies ordering reducers and records index movement', () => {
-      const engine = new BoardEngine({
+      createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: (engine) => {
+          engine.dispatch.select({
+            ids: ['note-1']
+          });
+        },
+        act: (engine) => {
+          engine.dispatch.orderSelection({
+            action: 'bring_to_front'
+          });
+        },
+        assert: {
+          events: [
+            {
+              revision: 2,
+              deltas: [
+                {
+                  type: 'element_updated',
+                  id: 'image-1',
+                  previous: {
+                    id: 'image-1',
+                    kind: 'image',
+                    x: 220,
+                    y: 120,
+                    width: 200,
+                    height: 160,
+                    src: '/img.png',
+                    alt: 'img'
+                  },
+                  current: {
+                    id: 'image-1',
+                    kind: 'image',
+                    x: 220,
+                    y: 120,
+                    width: 200,
+                    height: 160,
+                    src: '/img.png',
+                    alt: 'img'
+                  },
+                  previousIndex: 1,
+                  currentIndex: 0
+                },
+                {
+                  type: 'element_updated',
+                  id: 'note-1',
+                  previous: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  },
+                  current: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  },
+                  previousIndex: 0,
+                  currentIndex: 1
+                }
+              ]
+            }
+          ],
+          stateDiff: [
+            {
+              op: 'replace',
+              path: '/elementOrder/0',
+              value: 'image-1'
+            },
+            {
+              op: 'replace',
+              path: '/elementOrder/1',
+              value: 'note-1'
+            }
+          ]
+        }
       });
-
-      engine.dispatch.select({
-        ids: ['note-1']
-      });
-      engine.dispatch.orderSelection({
-        action: 'bring_to_front'
-      });
-
-      expect(engine.getState().elementOrder).toEqual(['image-1', 'note-1']);
-      const lastBatch = engine.getDeltasSince(1).batches.at(-1);
-      expect(lastBatch?.deltas.some((delta) => delta.type === 'element_updated')).toBe(true);
     });
 
     it('deletes selected elements via keyboard reducer', () => {
-      const engine = new BoardEngine({
+      createBoardEngineTestHarness({
         initialElements: testElements
+      }).test({
+        arrange: (engine) => {
+          engine.dispatch.select({
+            ids: ['note-1']
+          });
+        },
+        act: (engine) => {
+          engine.handleKeyboard({
+            type: 'keyboard',
+            phase: 'down',
+            key: 'Delete',
+            code: 'Delete',
+            shiftKey: false,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false
+          });
+        },
+        assert: {
+          events: [
+            {
+              revision: 2,
+              deltas: [
+                {
+                  type: 'element_removed',
+                  element: {
+                    id: 'note-1',
+                    kind: 'note',
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 80,
+                    text: 'Hello'
+                  },
+                  index: 0
+                },
+                {
+                  type: 'selection_changed',
+                  previous: ['note-1'],
+                  current: []
+                }
+              ]
+            }
+          ],
+          stateDiff: [
+            {
+              op: 'replace',
+              path: '/elementOrder/0',
+              value: 'image-1'
+            },
+            {
+              op: 'remove',
+              path: '/elementOrder/1'
+            },
+            {
+              op: 'remove',
+              path: '/elements/note-1'
+            },
+            {
+              op: 'remove',
+              path: '/selection/0'
+            }
+          ]
+        }
       });
-
-      engine.dispatch.select({
-        ids: ['note-1']
-      });
-      engine.handleKeyboard({
-        type: 'keyboard',
-        phase: 'down',
-        key: 'Delete',
-        code: 'Delete',
-        shiftKey: false,
-        altKey: false,
-        ctrlKey: false,
-        metaKey: false
-      });
-
-      expect(engine.getState().elements['note-1']).toBeUndefined();
-      expect(engine.getState().selection).toEqual([]);
     });
 
     it('rejects unknown kinds during initialization', () => {
       expect(() => {
-        return new BoardEngine({
+        return createBoardEngineTestHarness({
           initialElements: [
             {
               id: 'unknown-1',
@@ -1130,20 +1420,29 @@ if (import.meta.vitest) {
     });
 
     it('rejects unknown kinds during add command', () => {
-      const engine = new BoardEngine({
+      const harness = createBoardEngineTestHarness({
         initialElements: testElements
       });
 
       expect(() => {
-        engine.dispatch.addElement({
-          element: {
-            id: 'unknown-1',
-            kind: 'sticker',
-            x: 0,
-            y: 0,
-            width: 10,
-            height: 10
-          } as unknown as BoardElement
+        harness.test({
+          arrange: () => {},
+          act: (engine) => {
+            engine.dispatch.addElement({
+              element: {
+                id: 'unknown-1',
+                kind: 'sticker',
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10
+              } as unknown as BoardElement
+            });
+          },
+          assert: {
+            events: [],
+            stateDiff: []
+          }
         });
       }).toThrow('Unknown board element kind "sticker"');
     });

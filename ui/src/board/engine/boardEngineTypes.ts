@@ -25,3 +25,43 @@ Phase 1 keeps behavior unchanged but establishes one shared type surface
 that both the UI renderer and future headless engine can depend on.
 */
 export type BoardElement = BoardNoteElement | BoardImageElement;
+
+export interface BoardViewportState {
+  panX: number;
+  panY: number;
+  zoom: number;
+}
+
+export type BoardInteractionState =
+  | {
+      mode: 'idle';
+    }
+  | {
+      mode: 'dragging_selection';
+      pointerId: number | null;
+      origin: {
+        x: number;
+        y: number;
+      };
+      elementIds: string[];
+      startPositions: Record<
+        string,
+        {
+          x: number;
+          y: number;
+        }
+      >;
+    };
+
+export interface BoardState {
+  elements: Record<string, BoardElement>;
+  elementOrder: string[];
+  selection: string[];
+  viewport: BoardViewportState;
+  interaction: BoardInteractionState;
+}
+
+export interface BoardEngineConfig {
+  initialElements?: BoardElement[];
+  initialViewport?: Partial<BoardViewportState>;
+}

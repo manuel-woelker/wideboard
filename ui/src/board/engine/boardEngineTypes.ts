@@ -1,3 +1,5 @@
+import type { BoardElementRegistry } from './elementRegistry';
+
 export interface BoardElementFrame {
   x: number;
   y: number;
@@ -64,4 +66,5 @@ export interface BoardState {
 export interface BoardEngineConfig {
   initialElements?: BoardElement[];
   initialViewport?: Partial<BoardViewportState>;
+  elementRegistry?: BoardElementRegistry;
 }

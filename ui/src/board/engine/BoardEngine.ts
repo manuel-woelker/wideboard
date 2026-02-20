@@ -8,6 +8,7 @@ import type {
 } from './boardEvents';
 import type { BoardDelta, BoardDeltaBatch, BoardDeltaEnvelope, BoardRevision } from './boardDeltas';
 import type { BoardElement, BoardEngineConfig, BoardState } from './boardEngineTypes';
+import { createDefaultBoardElementRegistry, type BoardElementRegistry } from './elementRegistry';
 
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.5;
@@ -43,11 +44,12 @@ function normalizeElementIds(ids: string[], state: BoardState) {
   });
 }
 
-function createElementState(elements: BoardElement[]) {
+function createElementState(elements: BoardElement[], registry: BoardElementRegistry) {
   const elementMap: Record<string, BoardElement> = {};
   const elementOrder: string[] = [];
 
   elements.forEach((element) => {
+    registry.assertKnownKind(element.kind);
     const alreadyHadElement = Boolean(elementMap[element.id]);
     elementMap[element.id] = cloneElement(element);
 
@@ -67,8 +69,8 @@ function createElementState(elements: BoardElement[]) {
   };
 }
 
-function createInitialState(config: BoardEngineConfig): BoardState {
-  const elementState = createElementState(config.initialElements ?? []);
+function createInitialState(config: BoardEngineConfig, registry: BoardElementRegistry): BoardState {
+  const elementState = createElementState(config.initialElements ?? [], registry);
   return {
     elements: elementState.elements,
     elementOrder: elementState.elementOrder,
@@ -156,6 +158,8 @@ function applyOrdering(order: string[], ids: string[], action: BoardOrderingActi
 type MutateState = (state: BoardState, deltas: BoardDelta[]) => void;
 
 export class BoardEngine {
+  private readonly elementRegistry: BoardElementRegistry;
+
   private state: BoardState;
 
   private revision: BoardRevision = 0;
@@ -163,7 +167,8 @@ export class BoardEngine {
   private readonly deltaHistory: BoardDeltaEnvelope[] = [];
 
   public constructor(config: BoardEngineConfig = {}) {
-    this.state = createInitialState(config);
+    this.elementRegistry = config.elementRegistry ?? createDefaultBoardElementRegistry();
+    this.state = createInitialState(config, this.elementRegistry);
   }
 
   public handlePointer(event: BoardPointerEvent): BoardRevision {
@@ -250,11 +255,20 @@ export class BoardEngine {
           }
 
           const previousElement = cloneElement(element);
-          const nextElement = {
-            ...element,
-            x: start.x + deltaX,
-            y: start.y + deltaY
-          };
+          const nextElement = this.elementRegistry.reduce(
+            {
+              ...element,
+              x: start.x,
+              y: start.y
+            },
+            {
+              type: 'translate',
+              delta: {
+                x: deltaX,
+                y: deltaY
+              }
+            }
+          );
           state.elements[id] = nextElement;
           deltas.push({
             type: 'element_updated',
@@ -367,7 +381,10 @@ export class BoardEngine {
   public dispatch(command: BoardCommand): BoardRevision {
     return this.commit((state, deltas) => {
       if (command.type === 'set_elements') {
-        const next = createElementState(command.elements);
+        command.elements.forEach((element) => {
+          this.elementRegistry.assertKnownKind(element.kind);
+        });
+        const next = createElementState(command.elements, this.elementRegistry);
         const previousState = cloneState(state);
         state.elements = next.elements;
         state.elementOrder = next.elementOrder;
@@ -434,6 +451,7 @@ export class BoardEngine {
       }
 
       if (command.type === 'add_element') {
+        this.elementRegistry.assertKnownKind(command.element.kind);
         if (state.elements[command.element.id]) {
           return;
         }
@@ -554,11 +572,10 @@ export class BoardEngine {
 
         normalizeElementIds(state.selection, state).forEach((id) => {
           const previous = cloneElement(state.elements[id]);
-          const current = {
-            ...state.elements[id],
-            x: state.elements[id].x + command.delta.x,
-            y: state.elements[id].y + command.delta.y
-          };
+          const current = this.elementRegistry.reduce(state.elements[id], {
+            type: 'translate',
+            delta: command.delta
+          });
           state.elements[id] = current;
           deltas.push({
             type: 'element_updated',
@@ -577,11 +594,10 @@ export class BoardEngine {
 
         normalizeElementIds(command.ids, state).forEach((id) => {
           const previous = cloneElement(state.elements[id]);
-          const current = {
-            ...state.elements[id],
-            x: state.elements[id].x + command.delta.x,
-            y: state.elements[id].y + command.delta.y
-          };
+          const current = this.elementRegistry.reduce(state.elements[id], {
+            type: 'translate',
+            delta: command.delta
+          });
           state.elements[id] = current;
           deltas.push({
             type: 'element_updated',
@@ -915,6 +931,43 @@ if (import.meta.vitest) {
 
       expect(engine.getState().elements['note-1']).toBeUndefined();
       expect(engine.getState().selection).toEqual([]);
+    });
+
+    it('rejects unknown kinds during initialization', () => {
+      expect(() => {
+        return new BoardEngine({
+          initialElements: [
+            {
+              id: 'unknown-1',
+              kind: 'sticker',
+              x: 0,
+              y: 0,
+              width: 10,
+              height: 10
+            } as unknown as BoardElement
+          ]
+        });
+      }).toThrow('Unknown board element kind "sticker"');
+    });
+
+    it('rejects unknown kinds during add command', () => {
+      const engine = new BoardEngine({
+        initialElements: testElements
+      });
+
+      expect(() => {
+        engine.dispatch({
+          type: 'add_element',
+          element: {
+            id: 'unknown-1',
+            kind: 'sticker',
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10
+          } as unknown as BoardElement
+        });
+      }).toThrow('Unknown board element kind "sticker"');
     });
   });
 }

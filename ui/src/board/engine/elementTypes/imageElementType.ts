@@ -6,6 +6,9 @@ const DEFAULT_IMAGE_SIZE = {
   height: 240
 };
 
+/**
+ * Creates image-kind element behavior for registry registration.
+ */
 export function createImageElementType(): BoardElementType<BoardImageElement> {
   return {
     kind: 'image',

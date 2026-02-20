@@ -6,6 +6,9 @@ const DEFAULT_NOTE_SIZE = {
   height: 170
 };
 
+/**
+ * Creates note-kind element behavior for registry registration.
+ */
 export function createNoteElementType(): BoardElementType<BoardNoteElement> {
   return {
     kind: 'note',

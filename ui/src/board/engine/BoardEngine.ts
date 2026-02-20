@@ -157,13 +157,20 @@ function applyOrdering(order: string[], ids: string[], action: BoardOrderingActi
 
 type MutateState = (state: BoardState, deltas: BoardDelta[]) => void;
 
+/**
+ * Headless board state engine with deterministic reducers and revisioned deltas.
+ */
 export class BoardEngine {
+  /** Registry used for kind validation and kind-specific reducers. */
   private readonly elementRegistry: BoardElementRegistry;
 
+  /** Current canonical board state snapshot. */
   private state: BoardState;
 
+  /** Current committed revision number. */
   private revision: BoardRevision = 0;
 
+  /** Revision-ordered delta envelopes for incremental queries. */
   private readonly deltaHistory: BoardDeltaEnvelope[] = [];
 
   public constructor(config: BoardEngineConfig = {}) {
@@ -171,6 +178,9 @@ export class BoardEngine {
     this.state = createInitialState(config, this.elementRegistry);
   }
 
+  /**
+   * Applies pointer-driven interactions such as selection and dragging.
+   */
   public handlePointer(event: BoardPointerEvent): BoardRevision {
     if (event.phase === 'down' && event.button === 0 && event.targetElementId) {
       return this.commit((state, deltas) => {
@@ -304,6 +314,9 @@ export class BoardEngine {
     return this.revision;
   }
 
+  /**
+   * Applies keyboard-driven board mutations.
+   */
   public handleKeyboard(event: BoardKeyboardEvent): BoardRevision {
     if (event.phase !== 'down') {
       return this.revision;
@@ -361,10 +374,16 @@ export class BoardEngine {
     return this.revision;
   }
 
+  /**
+   * Reserved clipboard reducer entrypoint for copy/paste command flows.
+   */
   public handleClipboard(_event: BoardClipboardEvent): BoardRevision {
     return this.revision;
   }
 
+  /**
+   * Applies wheel-driven zoom interactions.
+   */
   public handleWheel(event: BoardWheelEvent): BoardRevision {
     const zoomFactor = Math.exp(-event.deltaY * ZOOM_SENSITIVITY);
     return this.dispatch({
@@ -374,10 +393,9 @@ export class BoardEngine {
     });
   }
 
-  /* 📖 # Why keep all state transitions behind `dispatch`?
-  This makes revision increments and delta emission uniform across direct commands
-  and event-derived reducers, which is required for deterministic replay.
-  */
+  /**
+   * Applies a board command and records deltas/revision when state changes.
+   */
   public dispatch(command: BoardCommand): BoardRevision {
     return this.commit((state, deltas) => {
       if (command.type === 'set_elements') {
@@ -711,14 +729,23 @@ export class BoardEngine {
     });
   }
 
+  /**
+   * Returns current board state snapshot.
+   */
   public getState(): Readonly<BoardState> {
     return this.state;
   }
 
+  /**
+   * Returns current engine revision.
+   */
   public getRevision(): BoardRevision {
     return this.revision;
   }
 
+  /**
+   * Returns all committed deltas after the provided revision.
+   */
   public getDeltasSince(revision: BoardRevision): BoardDeltaBatch {
     return {
       since: revision,
@@ -727,6 +754,9 @@ export class BoardEngine {
     };
   }
 
+  /**
+   * Runs a mutation transaction and commits revision/deltas atomically.
+   */
   private commit(mutate: MutateState): BoardRevision {
     const nextState = cloneState(this.state);
     const deltas: BoardDelta[] = [];

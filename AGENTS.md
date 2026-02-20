@@ -97,7 +97,7 @@ This helps with writing since the questions should be answered.
 It also makes it easiers for readers to determine if a section is relevant.
 
 ### Hyperlit in-code comments
-When writing code, document the "Why" directly in the source code using hyperlit comment markers ("📖"). This ensures that:
+Use hyperlit comment markers ("📖") only for non-standard rationale that is not well covered by standard API docs. This ensures that:
 
 - **Context is preserved** with the code it explains
 - **Documentation is discoverable** through hyperlit's extraction tools
@@ -125,6 +125,12 @@ let state = Arc::new(Mutex::new(data));
 ```
 
 Keep documentation focused and concise—explain the "Why", not the "What" (the code shows what it does).
+
+### Function, Interface, struct and class documentation
+
+Functions, interfaces, structs and classes should be documented using the standard language syntax (e.g. JsDoc/TsDoc or RustDoc).
+Use this standard documentation style by default.
+Fields on interfaces, structs, and classes should also be documented (including private/internal fields where useful for maintenance).
 
 ## Testing strategy
 

@@ -2,39 +2,66 @@ import type { BoardElement, BoardElementFrame, BoardElementKind } from './boardE
 import { createImageElementType } from './elementTypes/imageElementType';
 import { createNoteElementType } from './elementTypes/noteElementType';
 
+/**
+ * Input for kind-specific default element creation.
+ */
 export interface BoardElementTypeCreateDefaultInput {
+  /** Requested id for the new element. */
   id: string;
+  /** Optional starting position. */
   position?: {
+    /** Initial X position. */
     x: number;
+    /** Initial Y position. */
     y: number;
   };
+  /** Optional starting dimensions. */
   size?: {
+    /** Initial width. */
     width: number;
+    /** Initial height. */
     height: number;
   };
 }
 
 export type BoardElementTypeReduceEvent =
   | {
+      /** Translate event type. */
       type: 'translate';
+      /** Translation delta in board space. */
       delta: {
+        /** Delta X. */
         x: number;
+        /** Delta Y. */
         y: number;
       };
     }
   | {
+      /** Absolute/partial frame override event type. */
       type: 'set_frame';
+      /** Partial frame values to apply. */
       frame: Partial<BoardElementFrame>;
     };
 
+/**
+ * Kind-specific behavior contract used by the board engine.
+ */
 export interface BoardElementType<TModel extends BoardElement = BoardElement> {
+  /** Element kind handled by this type. */
   kind: TModel['kind'];
+  /** Creates a default model instance for this kind. */
   createDefault(input: BoardElementTypeCreateDefaultInput): TModel;
+  /** Applies a kind-scoped reducer event to the model. */
   reduce(model: TModel, event: BoardElementTypeReduceEvent): TModel;
+  /** Returns bounds used for selection and hit-testing. */
   getBounds(model: TModel): BoardElementFrame;
 }
 
+/**
+ * Registry for board element kinds and their reducer/bounds behavior.
+ */
 export class BoardElementRegistry {
+  /** Registered element behavior by kind. */
   private readonly types = new Map<BoardElementKind, BoardElementType>();
 
   public constructor(types: BoardElementType[]) {
@@ -85,11 +112,9 @@ export class BoardElementRegistry {
   }
 }
 
-/* 📖 # Why provide a default registry factory?
-Phase 3 keeps UI behavior stable while introducing pluggable element types.
-Creating one canonical default registry ensures all engine entry points
-validate and reduce note/image models consistently.
-*/
+/**
+ * Creates the default registry used by the engine (note + image kinds).
+ */
 export function createDefaultBoardElementRegistry() {
   return new BoardElementRegistry([createNoteElementType(), createImageElementType()]);
 }

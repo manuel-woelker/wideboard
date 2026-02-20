@@ -3,17 +3,15 @@ import type { BoardDelta } from './boardDeltas';
 import type { BoardEngineConfig, BoardState } from './boardEngineTypes';
 
 /**
- * One normalized state diff entry used by harness snapshot assertions.
+ * One JSON diff operation used for state snapshot assertions.
  */
-export interface BoardEngineStateDiffEntry {
-  /** Diff category for this path. */
-  kind: 'added' | 'removed' | 'changed';
-  /** JSON-style path to the changed value. */
+export interface BoardEngineJsonDiffOperation {
+  /** JSON Patch-style operation kind. */
+  op: 'add' | 'remove' | 'replace';
+  /** JSON pointer path to changed value. */
   path: string;
-  /** Previous value when relevant. */
-  before?: unknown;
-  /** Current value when relevant. */
-  after?: unknown;
+  /** New value for add/replace operations. */
+  value?: unknown;
 }
 
 /**
@@ -33,7 +31,7 @@ export interface BoardEngineHarnessExpectedSnapshots {
   /** Expected emitted updates for the act phase. */
   events: BoardEngineEventSnapshot[];
   /** Expected state diff between arrange baseline and act result. */
-  stateDiff: BoardEngineStateDiffEntry[];
+  stateDiff: BoardEngineJsonDiffOperation[];
 }
 
 /**
@@ -55,7 +53,7 @@ export interface BoardEngineHarnessActualSnapshots {
   /** Captured emitted updates for the act phase. */
   events: BoardEngineEventSnapshot[];
   /** Computed state diff from arrange baseline to current state. */
-  stateDiff: BoardEngineStateDiffEntry[];
+  stateDiff: BoardEngineJsonDiffOperation[];
 }
 
 function toPlainSnapshot<T>(value: T): T {
@@ -70,11 +68,20 @@ function hasOwnKey(value: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function buildStateDiffEntries(
+function escapeJsonPointerSegment(segment: string) {
+  return segment.replaceAll('~', '~0').replaceAll('/', '~1');
+}
+
+function appendJsonPointer(basePath: string, segment: string | number) {
+  const encoded = escapeJsonPointerSegment(String(segment));
+  return `${basePath}/${encoded}`;
+}
+
+function buildJsonDiffOperations(
   path: string,
   previous: unknown,
   current: unknown,
-  output: BoardEngineStateDiffEntry[]
+  output: BoardEngineJsonDiffOperation[]
 ) {
   if (Object.is(previous, current)) {
     return;
@@ -83,27 +90,26 @@ function buildStateDiffEntries(
   if (Array.isArray(previous) && Array.isArray(current)) {
     const maxLength = Math.max(previous.length, current.length);
     for (let index = 0; index < maxLength; index += 1) {
-      const nextPath = `${path}[${index}]`;
+      const nextPath = appendJsonPointer(path, index);
       const hasPrevious = index < previous.length;
       const hasCurrent = index < current.length;
       if (hasPrevious && hasCurrent) {
-        buildStateDiffEntries(nextPath, previous[index], current[index], output);
+        buildJsonDiffOperations(nextPath, previous[index], current[index], output);
         continue;
       }
 
       if (hasCurrent) {
         output.push({
-          kind: 'added',
+          op: 'add',
           path: nextPath,
-          after: toPlainSnapshot(current[index])
+          value: toPlainSnapshot(current[index])
         });
         continue;
       }
 
       output.push({
-        kind: 'removed',
-        path: nextPath,
-        before: toPlainSnapshot(previous[index])
+        op: 'remove',
+        path: nextPath
       });
     }
     return;
@@ -112,46 +118,41 @@ function buildStateDiffEntries(
   if (isObject(previous) && isObject(current)) {
     const keys = new Set([...Object.keys(previous), ...Object.keys(current)]);
     [...keys].sort().forEach((key) => {
-      const nextPath = `${path}.${key}`;
+      const nextPath = appendJsonPointer(path, key);
       const previousHasKey = hasOwnKey(previous, key);
       const currentHasKey = hasOwnKey(current, key);
       if (previousHasKey && currentHasKey) {
-        buildStateDiffEntries(nextPath, previous[key], current[key], output);
+        buildJsonDiffOperations(nextPath, previous[key], current[key], output);
         return;
       }
 
       if (currentHasKey) {
         output.push({
-          kind: 'added',
+          op: 'add',
           path: nextPath,
-          after: toPlainSnapshot(current[key])
+          value: toPlainSnapshot(current[key])
         });
         return;
       }
 
       output.push({
-        kind: 'removed',
-        path: nextPath,
-        before: toPlainSnapshot(previous[key])
+        op: 'remove',
+        path: nextPath
       });
     });
     return;
   }
 
   output.push({
-    kind: 'changed',
+    op: 'replace',
     path,
-    before: toPlainSnapshot(previous),
-    after: toPlainSnapshot(current)
+    value: toPlainSnapshot(current)
   });
 }
 
-function createBoardStateDiffSnapshot(
-  previous: BoardState,
-  current: BoardState
-): BoardEngineStateDiffEntry[] {
-  const diffEntries: BoardEngineStateDiffEntry[] = [];
-  buildStateDiffEntries('$', previous, current, diffEntries);
+function createBoardStateDiffSnapshot(previous: BoardState, current: BoardState) {
+  const diffEntries: BoardEngineJsonDiffOperation[] = [];
+  buildJsonDiffOperations('', previous, current, diffEntries);
   return diffEntries;
 }
 
@@ -321,16 +322,14 @@ if (import.meta.vitest) {
           ],
           stateDiff: [
             {
-              kind: 'changed',
-              path: '$.elements.note-1.x',
-              before: 10,
-              after: 15
+              op: 'replace',
+              path: '/elements/note-1/x',
+              value: 15
             },
             {
-              kind: 'changed',
-              path: '$.elements.note-1.y',
-              before: 20,
-              after: 18
+              op: 'replace',
+              path: '/elements/note-1/y',
+              value: 18
             }
           ]
         }

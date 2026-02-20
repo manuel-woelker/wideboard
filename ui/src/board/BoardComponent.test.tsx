@@ -755,4 +755,71 @@ describe('BoardComponent', () => {
     expect(document.querySelector('[data-element-id="test-note"]')).not.toBeInTheDocument();
     expect(document.querySelector('[data-element-id="test-image"]')).toBeInTheDocument();
   });
+
+  it('does not delete selected notes while editing note text', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const editor = document.querySelector(
+      '[data-testid="note-editor-test-note"]'
+    ) as HTMLDivElement;
+    editor.setAttribute('contenteditable', 'true');
+    editor.focus();
+
+    fireEvent.keyDown(editor, { key: 'Delete' });
+
+    expect(document.querySelector('[data-element-id="test-note"]')).toBeInTheDocument();
+  });
+
+  it('does not delete selected notes when focus is outside the board', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const outsideInput = document.createElement('input');
+    document.body.appendChild(outsideInput);
+    outsideInput.focus();
+
+    try {
+      fireEvent.keyDown(window, { key: 'Delete' });
+      expect(document.querySelector('[data-element-id="test-note"]')).toBeInTheDocument();
+    } finally {
+      outsideInput.remove();
+    }
+  });
+
+  it('ignores window paste when focus is outside the board', () => {
+    render(<BoardComponent initialElements={[baseNote]} />);
+
+    const outsideInput = document.createElement('input');
+    document.body.appendChild(outsideInput);
+    outsideInput.focus();
+
+    const clipboardData = {
+      files: [],
+      getData: (type: string) => {
+        if (type !== 'application/x-wideboard-note') {
+          return '';
+        }
+
+        return JSON.stringify({
+          kind: 'note',
+          text: 'Should not be pasted',
+          x: 0,
+          y: 0,
+          width: 260,
+          height: 170
+        });
+      }
+    };
+
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      value: clipboardData
+    });
+
+    try {
+      window.dispatchEvent(pasteEvent);
+      expect(document.querySelectorAll('[data-element-id]').length).toBe(1);
+    } finally {
+      outsideInput.remove();
+    }
+  });
 });

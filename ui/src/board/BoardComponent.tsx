@@ -148,6 +148,7 @@ class BoardRenderer {
   private zoom = 1;
 
   private marqueeNode: HTMLDivElement | null = null;
+  private suppressContextMenuOnce = false;
 
   private readonly selectionFrameNode: HTMLDivElement;
 
@@ -1367,13 +1368,37 @@ class BoardRenderer {
       return;
     }
 
-    event.preventDefault();
+    const isRightButtonPan = event.button === 2;
+    if (isRightButtonPan) {
+      this.suppressContextMenuOnce = false;
+    } else {
+      event.preventDefault();
+    }
 
     const origin = { x: event.clientX, y: event.clientY };
     let appliedDelta: PointerDelta = { x: 0, y: 0 };
+    let hasDragged = false;
     this.host.style.cursor = 'grabbing';
 
     const onPointerMove = (moveEvent: PointerEvent) => {
+      if (
+        !hasDragged &&
+        Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) >= 3
+      ) {
+        hasDragged = true;
+        if (isRightButtonPan) {
+          this.suppressContextMenuOnce = true;
+        }
+      }
+
+      if (!hasDragged) {
+        return;
+      }
+
+      if (isRightButtonPan) {
+        moveEvent.preventDefault();
+      }
+
       const delta = {
         x: (moveEvent.clientX - origin.x) / this.zoom,
         y: (moveEvent.clientY - origin.y) / this.zoom
@@ -1404,7 +1429,8 @@ class BoardRenderer {
       return;
     }
 
-    if (event.button === 2) {
+    if (this.suppressContextMenuOnce) {
+      this.suppressContextMenuOnce = false;
       event.preventDefault();
     }
   };

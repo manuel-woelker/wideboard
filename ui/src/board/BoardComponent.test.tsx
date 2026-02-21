@@ -1059,7 +1059,7 @@ describe('BoardComponent', () => {
     expect(noteNode.style.width).not.toBe(initialWidth);
   });
 
-  it('prevents the context menu when right-click panning', () => {
+  it('allows the context menu on right-click without dragging', () => {
     render(<BoardComponent initialElements={[baseNote]} />);
 
     const board = screen.getByTestId('board-component');
@@ -1071,7 +1071,53 @@ describe('BoardComponent', () => {
 
     const prevented = !board.dispatchEvent(event);
 
-    expect(prevented).toBe(true);
+    expect(prevented).toBe(false);
+  });
+
+  it('prevents the context menu when right-click dragging to pan', () => {
+    const addSpy = vi.spyOn(window, 'addEventListener').mockImplementation(() => {});
+
+    try {
+      render(<BoardComponent initialElements={[baseNote]} />);
+
+      const board = screen.getByTestId('board-component');
+      board.dispatchEvent(
+        new MouseEvent('pointerdown', {
+          button: 2,
+          buttons: 2,
+          clientX: 10,
+          clientY: 10,
+          bubbles: true
+        })
+      );
+
+      const moveCall = addSpy.mock.calls.find(([type]) => type === 'pointermove');
+      const handler = moveCall?.[1];
+      expect(typeof handler).toBe('function');
+      if (typeof handler !== 'function') {
+        throw new Error('Expected pointer move handler to be registered.');
+      }
+
+      (handler as (event: Event) => void)(
+        new MouseEvent('pointermove', {
+          clientX: 60,
+          clientY: 40,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+
+      const event = new MouseEvent('contextmenu', {
+        button: 2,
+        bubbles: true,
+        cancelable: true
+      });
+
+      const prevented = !board.dispatchEvent(event);
+      expect(prevented).toBe(true);
+    } finally {
+      addSpy.mockRestore();
+    }
   });
 
   it('deletes selected elements when pressing Delete', () => {

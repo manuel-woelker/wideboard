@@ -94,6 +94,35 @@ export function App() {
     document.title = DEFAULT_BOARD.name;
   }, []);
 
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test') {
+      return;
+    }
+
+    if (typeof WebSocket === 'undefined') {
+      return;
+    }
+
+    const socket = new WebSocket('ws://localhost:3000/ws');
+    const echoMessage = `wideboard-echo-${Date.now()}`;
+
+    socket.onopen = () => {
+      socket.send(echoMessage);
+    };
+
+    socket.onmessage = (event) => {
+      console.log('WebSocket echo reply:', event.data);
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+
   return (
     <Shell>
       <Global

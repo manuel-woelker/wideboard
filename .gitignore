@@ -3,3 +3,5 @@ ui/test-results/
 ui/*.tsbuildinfo
 *.log
 target/
+.pnpm-store/
+.tool-tool/v2/

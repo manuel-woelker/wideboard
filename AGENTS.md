@@ -46,39 +46,6 @@ cd ui
   - `DOCUMENTATION.md` - Documentation index
 - `ui/src/` - UI source code
 
-## Development Journal
-
-Every code change must be accompanied by an entry in the development journal. Create or append to a file at `docs/journal/YYYY-MM-DD.md` using the following format:
-
-```markdown
-### HH:MM - [Synopsis of the change] [Name of agent/model and version]
-
-**User Prompt:**
-[The exact user request]
-
-**Issues Encountered:**
-- [List of any problems, errors, or roadblocks encountered]
-
-**Decisions Made:**
-- [Architectural or design choices made and why]
-
-**Technical Info Consulted:**
-- [Documentation, code references, or external resources used]
-
-**Assumptions Made:**
-- [Any assumptions that influenced the implementation]
-
-**Other Notes:**
-- [Any other relevant information for understanding the implementation]
-```
-The time should be in local time.
-
-This journal provides a chronological record of development decisions and context that isn't captured in code comments or commit messages. It helps future maintainers understand the "why" behind changes.
-
-Journal entries should be appended in chronological order, older entries at the top, new entries at the bottom.
-
-**Important:** When writing journal entries, use the correct model identifier. Check your system information to determine your actual model ID (e.g., `opencode/kimi-k2.5-free`, `claude-sonnet-4`, etc.). Do not copy model IDs from previous entries without verification, as different agents may be used for different tasks.
-
 ## State Management
 
 Use the in-repo Jestor helper at `ui/src/shared/store/jestor.ts` for shared UI state.
@@ -159,6 +126,9 @@ Also run `../tool-tool.exe pnpm run check` to ensure the tests pass and the code
 Commit message should be in the "Conventional Commits" format, e.g. "feat(UI): Add about button to see version and build date".
 
 Below the first line include detail information about the changes made.
+
+**Important:** Append all user prompts included in this commit to the commit message body under a `User Prompts:` section.
+Also include the agent model identifier used for the commit in a `Model:` section in the commit message body.
 
 Never push code or ask to push code.
 

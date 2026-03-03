@@ -37,6 +37,8 @@ export interface BoardComponentProps {
   boardId?: string;
   initialElements?: BoardElement[];
   onEngineReady?: (engine: BoardEngine) => void;
+  onBoardPointerMove?: (point: { x: number; y: number }) => void;
+  remotePointers?: Array<{ participantId: string; name: string; x: number; y: number }>;
 }
 
 const MIN_NOTE_SIZE: MinimumSize = {
@@ -1697,7 +1699,9 @@ class BoardRenderer {
 export function BoardComponent({
   boardId = 'welcome',
   initialElements,
-  onEngineReady
+  onEngineReady,
+  onBoardPointerMove,
+  remotePointers = []
 }: BoardComponentProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
@@ -1987,6 +1991,19 @@ export function BoardComponent({
         ref={hostRef}
         data-testid="board-component"
         data-board-id={boardId}
+        onPointerMove={(event) => {
+          const renderer = rendererRef.current;
+          if (!renderer || !onBoardPointerMove) {
+            return;
+          }
+
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const boardPosition = renderer.toBoardPosition({
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top
+          });
+          onBoardPointerMove(boardPosition);
+        }}
         onPointerDown={(event) => {
           const renderer = rendererRef.current;
           if (!renderer) {
@@ -2013,7 +2030,67 @@ export function BoardComponent({
           setIsAddingNote(false);
         }}
         style={{ width: '100%', height: '100vh', cursor: isAddingNote ? noteCursor : 'default' }}
-      />
+      >
+        {debugBoardState
+          ? remotePointers.map((pointer) => {
+              const x = (pointer.x + debugBoardState.viewport.panX) * debugBoardState.viewport.zoom;
+              const y = (pointer.y + debugBoardState.viewport.panY) * debugBoardState.viewport.zoom;
+              return (
+                <div
+                  key={pointer.participantId}
+                  style={{
+                    position: 'absolute',
+                    left: `${x}px`,
+                    top: `${y}px`,
+                    width: 0,
+                    height: 0,
+                    pointerEvents: 'none',
+                    zIndex: 25
+                  }}
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    style={{
+                      position: 'absolute',
+                      left: '-1px',
+                      top: '-1px',
+                      width: '20px',
+                      height: '20px',
+                      overflow: 'visible'
+                    }}
+                  >
+                    <path
+                      d="M2.5 2.5L2.5 16.8L6.7 12.8L10.3 19L12.9 17.6L9.4 11.7L15.8 11.7L2.5 2.5Z"
+                      fill="#ff4f4f"
+                      stroke="#b82424"
+                      strokeWidth="1.1"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <span
+                    style={{
+                      position: 'absolute',
+                      left: '14px',
+                      top: '10px',
+                      padding: '0.15rem 0.4rem',
+                      borderRadius: '0.4rem',
+                      background: 'rgba(255, 79, 79, 0.92)',
+                      color: '#fff',
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif'
+                    }}
+                  >
+                    {pointer.name}
+                  </span>
+                </div>
+              );
+            })
+          : null}
+      </div>
     </div>
   );
 }

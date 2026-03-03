@@ -1,6 +1,6 @@
 import { Global, css } from '@emotion/react';
 import styled from '@emotion/styled';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
 import elephantImage from '../assets/elephant.jpg';
 
@@ -8,6 +8,22 @@ interface BoardModel {
   id: string;
   name: string;
   elements: BoardElement[];
+}
+
+interface MouseMovedMessage {
+  type: 'mouse_moved';
+  participantId: string;
+  name: string;
+  boardX: number;
+  boardY: number;
+}
+
+interface RemotePointer {
+  participantId: string;
+  name: string;
+  x: number;
+  y: number;
+  updatedAt: number;
 }
 
 const DEFAULT_BOARD: BoardModel = {
@@ -89,7 +105,99 @@ const OverlayTitle = styled.h1`
   z-index: 10;
 `;
 
+const OverlayParticipant = styled.p`
+  position: fixed;
+  top: 3.2rem;
+  left: 1rem;
+  margin: 0;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(7, 32, 52, 0.88);
+  color: #d4ecff;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  z-index: 10;
+`;
+
+const PARTICIPANT_ADJECTIVES = [
+  'Swift',
+  'Quiet',
+  'Bright',
+  'Mellow',
+  'Brisk',
+  'Curious',
+  'Nimble',
+  'Clever'
+];
+
+const PARTICIPANT_ANIMALS = ['Otter', 'Fox', 'Hawk', 'Whale', 'Panda', 'Lynx', 'Sparrow', 'Badger'];
+
+/**
+ * Generates a readable random display name for the local participant.
+ */
+export function createRandomParticipantName(randomValue = Math.random) {
+  const adjectiveIndex = Math.floor(randomValue() * PARTICIPANT_ADJECTIVES.length);
+  const animalIndex = Math.floor(randomValue() * PARTICIPANT_ANIMALS.length);
+  const tag = String(Math.floor(randomValue() * 1000)).padStart(3, '0');
+  return `${PARTICIPANT_ADJECTIVES[adjectiveIndex]}${PARTICIPANT_ANIMALS[animalIndex]}-${tag}`;
+}
+
+function createParticipantId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `participant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function resolveWebSocketUrl() {
+  const configuredUrl = import.meta.env.VITE_WS_URL;
+  if (typeof configuredUrl === 'string' && configuredUrl.length > 0) {
+    return configuredUrl;
+  }
+
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:3000/ws';
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.hostname}:3000/ws`;
+}
+
+function parseMouseMovedMessage(rawPayload: string): MouseMovedMessage | null {
+  try {
+    const parsed: unknown = JSON.parse(rawPayload);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'type' in parsed &&
+      parsed.type === 'mouse_moved' &&
+      'participantId' in parsed &&
+      typeof parsed.participantId === 'string' &&
+      'name' in parsed &&
+      typeof parsed.name === 'string' &&
+      'boardX' in parsed &&
+      typeof parsed.boardX === 'number' &&
+      Number.isFinite(parsed.boardX) &&
+      'boardY' in parsed &&
+      typeof parsed.boardY === 'number' &&
+      Number.isFinite(parsed.boardY)
+    ) {
+      return parsed as MouseMovedMessage;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 export function App() {
+  const [remotePointers, setRemotePointers] = useState<Record<string, RemotePointer>>({});
+  const participantId = useMemo(() => createParticipantId(), []);
+  const participantName = useMemo(() => createRandomParticipantName(), []);
+  const sendPointerRef = useRef<(position: { x: number; y: number }) => void>(() => {});
+
   useEffect(() => {
     document.title = DEFAULT_BOARD.name;
   }, []);
@@ -103,25 +211,68 @@ export function App() {
       return;
     }
 
-    const socket = new WebSocket('ws://localhost:3000/ws');
-    const echoMessage = `wideboard-echo-${Date.now()}`;
+    const socket = new WebSocket(resolveWebSocketUrl());
 
-    socket.onopen = () => {
-      socket.send(echoMessage);
+    const onPointerMove = (position: { x: number; y: number }) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const payload: MouseMovedMessage = {
+        type: 'mouse_moved',
+        participantId,
+        name: participantName,
+        boardX: position.x,
+        boardY: position.y
+      };
+      socket.send(JSON.stringify(payload));
     };
 
+    sendPointerRef.current = onPointerMove;
+
     socket.onmessage = (event) => {
-      console.log('WebSocket echo reply:', event.data);
+      if (typeof event.data !== 'string') {
+        return;
+      }
+
+      const message = parseMouseMovedMessage(event.data);
+      if (!message || message.participantId === participantId) {
+        return;
+      }
+
+      setRemotePointers((currentPointers) => ({
+        ...currentPointers,
+        [message.participantId]: {
+          participantId: message.participantId,
+          name: message.name,
+          x: message.boardX,
+          y: message.boardY,
+          updatedAt: Date.now()
+        }
+      }));
     };
 
     socket.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
 
+    const stalePointerCleanupInterval = window.setInterval(() => {
+      const staleThreshold = Date.now() - 15_000;
+      setRemotePointers((currentPointers) =>
+        Object.fromEntries(
+          Object.entries(currentPointers).filter(
+            ([, pointer]) => pointer.updatedAt > staleThreshold
+          )
+        )
+      );
+    }, 5_000);
+
     return () => {
+      sendPointerRef.current = () => {};
+      window.clearInterval(stalePointerCleanupInterval);
       socket.close();
     };
-  }, []);
+  }, [participantId, participantName]);
 
   return (
     <Shell>
@@ -139,7 +290,20 @@ export function App() {
         `}
       />
       <OverlayTitle>{DEFAULT_BOARD.name} board</OverlayTitle>
-      <BoardComponent boardId={DEFAULT_BOARD.id} initialElements={DEFAULT_BOARD.elements} />
+      <OverlayParticipant>You: {participantName}</OverlayParticipant>
+      <BoardComponent
+        boardId={DEFAULT_BOARD.id}
+        initialElements={DEFAULT_BOARD.elements}
+        onBoardPointerMove={(point) => {
+          sendPointerRef.current(point);
+        }}
+        remotePointers={Object.values(remotePointers).map((pointer) => ({
+          participantId: pointer.participantId,
+          name: pointer.name,
+          x: pointer.x,
+          y: pointer.y
+        }))}
+      />
     </Shell>
   );
 }

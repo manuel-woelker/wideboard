@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { App } from './App';
+import { App, createRandomParticipantName } from './App';
 
 describe('App', () => {
   it('renders the board heading', () => {
@@ -30,5 +30,22 @@ describe('App', () => {
   it('renders the welcome elephant image', () => {
     render(<App />);
     expect(screen.getByAltText('Elephant in the welcome board')).toBeInTheDocument();
+  });
+
+  it('renders a local participant label', () => {
+    render(<App />);
+    expect(screen.getByText(/^You:\s/)).toBeInTheDocument();
+  });
+
+  it('creates random participant names from adjective, animal, and numeric tag', () => {
+    const randomValues = [0, 0.5, 0.007];
+    let index = 0;
+    const random = () => {
+      const value = randomValues[index] ?? 0;
+      index += 1;
+      return value;
+    };
+
+    expect(createRandomParticipantName(random)).toBe('SwiftPanda-007');
   });
 });

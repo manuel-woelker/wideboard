@@ -57,12 +57,12 @@ jobs:
       - name: Build release server and append UI bundle
         run: |
           cargo build --release -p server
-          cp target/release/server target/release/server-with-ui-assets
-          cat ui-assets.zip >> target/release/server-with-ui-assets
-          chmod +x target/release/server-with-ui-assets
+          cp target/release/server target/release/wideboard
+          cat ui-assets.zip >> target/release/wideboard
+          chmod +x target/release/wideboard
 
       - name: Upload bundled server artifact
         uses: actions/upload-artifact@v4
         with:
-          name: server-with-ui-assets-${{ github.sha }}
-          path: target/release/server-with-ui-assets
+          name: wideboard-${{ github.sha }}
+          path: target/release/wideboard

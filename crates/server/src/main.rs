@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     io,
+    io::Cursor,
     path::PathBuf,
     sync::{
         Arc,
@@ -12,10 +13,11 @@ use std::{
 use axum::{
     Router,
     extract::{
-        State,
+        Path, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    response::IntoResponse,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
@@ -24,6 +26,7 @@ use tokio::sync::{RwLock, mpsc};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
+use zip::ZipArchive;
 
 const BOARD_SAVE_DIRECTORY: &str = "boards";
 const BOARD_SAVE_INTERVAL: Duration = Duration::from_secs(10);
@@ -37,6 +40,17 @@ struct WireBoardState {
 struct BoardEntry {
     state: WireBoardState,
     modified: bool,
+}
+
+#[derive(Debug, Clone)]
+struct EmbeddedAsset {
+    bytes: Vec<u8>,
+    content_type: &'static str,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EmbeddedAssets {
+    files: HashMap<String, EmbeddedAsset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +125,7 @@ enum ServerMessage {
 struct AppState {
     clients: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<Message>>>>,
     boards: Arc<RwLock<HashMap<String, BoardEntry>>>,
+    assets: Arc<EmbeddedAssets>,
     next_client_id: Arc<AtomicU64>,
 }
 
@@ -127,9 +142,12 @@ async fn main() {
         .await
         .expect("failed to create board persistence directory");
 
+    let assets = load_embedded_assets_from_current_executable().await;
+
     let app_state = AppState {
         clients: Arc::new(RwLock::new(HashMap::new())),
         boards: Arc::new(RwLock::new(HashMap::new())),
+        assets: Arc::new(assets),
         next_client_id: Arc::new(AtomicU64::new(1)),
     };
 
@@ -137,6 +155,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
+        .route("/", get(serve_index_asset))
+        .route("/{*path}", get(serve_embedded_asset))
         .with_state(app_state)
         .layer(CorsLayer::permissive());
 
@@ -164,6 +184,41 @@ async fn websocket_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, state, client_id))
 }
 
+async fn serve_index_asset(State(state): State<AppState>) -> Response {
+    serve_asset_path("index.html", &state.assets)
+}
+
+async fn serve_embedded_asset(Path(path): Path<String>, State(state): State<AppState>) -> Response {
+    serve_asset_path(path.as_str(), &state.assets)
+}
+
+fn serve_asset_path(path: &str, assets: &EmbeddedAssets) -> Response {
+    let normalized = path.trim_start_matches('/');
+    if let Some(asset) = assets.files.get(normalized) {
+        return response_with_asset(StatusCode::OK, asset);
+    }
+
+    // Support SPA client-side routes by serving index.html when the requested path
+    // does not look like a static file.
+    if !normalized.contains('.') {
+        if let Some(index_asset) = assets.files.get("index.html") {
+            return response_with_asset(StatusCode::OK, index_asset);
+        }
+    }
+
+    (StatusCode::NOT_FOUND, "Asset not found").into_response()
+}
+
+fn response_with_asset(status: StatusCode, asset: &EmbeddedAsset) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static(asset.content_type),
+    );
+
+    (status, headers, asset.bytes.clone()).into_response()
+}
+
 fn encode_message(message: &ServerMessage) -> Option<Message> {
     match serde_json::to_string(message) {
         Ok(payload) => Some(Message::Text(payload.into())),
@@ -176,6 +231,134 @@ fn encode_message(message: &ServerMessage) -> Option<Message> {
 
 fn read_element_id(element: &serde_json::Value) -> Option<&str> {
     element.get("id").and_then(serde_json::Value::as_str)
+}
+
+fn content_type_for_path(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or_default() {
+        "html" => "text/html; charset=utf-8",
+        "js" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+fn find_appended_zip_start(binary_bytes: &[u8]) -> Option<usize> {
+    const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
+    if binary_bytes.len() < 22 {
+        return None;
+    }
+
+    // The EOCD record is at most 65,557 bytes from EOF (22 + u16::MAX comment).
+    let search_start = binary_bytes.len().saturating_sub(65_557);
+
+    for eocd_pos in (search_start..=binary_bytes.len() - 22).rev() {
+        if binary_bytes[eocd_pos..eocd_pos + 4] != EOCD_SIGNATURE {
+            continue;
+        }
+
+        let comment_length =
+            u16::from_le_bytes([binary_bytes[eocd_pos + 20], binary_bytes[eocd_pos + 21]]) as usize;
+        let expected_end = eocd_pos + 22 + comment_length;
+        if expected_end != binary_bytes.len() {
+            continue;
+        }
+
+        let central_directory_size = u32::from_le_bytes([
+            binary_bytes[eocd_pos + 12],
+            binary_bytes[eocd_pos + 13],
+            binary_bytes[eocd_pos + 14],
+            binary_bytes[eocd_pos + 15],
+        ]) as usize;
+        let central_directory_offset = u32::from_le_bytes([
+            binary_bytes[eocd_pos + 16],
+            binary_bytes[eocd_pos + 17],
+            binary_bytes[eocd_pos + 18],
+            binary_bytes[eocd_pos + 19],
+        ]) as usize;
+
+        let start_delta = central_directory_size.checked_add(central_directory_offset)?;
+        let zip_start = eocd_pos.checked_sub(start_delta)?;
+        return Some(zip_start);
+    }
+
+    None
+}
+
+async fn load_embedded_assets_from_current_executable() -> EmbeddedAssets {
+    let executable_path = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            warn!(%error, "failed to determine current executable path");
+            return EmbeddedAssets::default();
+        }
+    };
+
+    let binary_bytes = match tokio::fs::read(&executable_path).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            warn!(path = %executable_path.display(), %error, "failed to read executable bytes");
+            return EmbeddedAssets::default();
+        }
+    };
+
+    let Some(zip_start) = find_appended_zip_start(&binary_bytes) else {
+        warn!("no appended ui zip payload detected in executable");
+        return EmbeddedAssets::default();
+    };
+
+    let zip_bytes = &binary_bytes[zip_start..];
+    let reader = Cursor::new(zip_bytes);
+    let mut archive = match ZipArchive::new(reader) {
+        Ok(archive) => archive,
+        Err(error) => {
+            warn!(%error, "failed to parse appended zip payload");
+            return EmbeddedAssets::default();
+        }
+    };
+
+    let mut files = HashMap::new();
+    for index in 0..archive.len() {
+        let mut file = match archive.by_index(index) {
+            Ok(file) => file,
+            Err(error) => {
+                warn!(index, %error, "failed to read file entry from embedded zip");
+                continue;
+            }
+        };
+
+        if file.is_dir() {
+            continue;
+        }
+
+        let name = file.name().trim_start_matches('/').to_string();
+        let mut content = Vec::with_capacity(file.size() as usize);
+        if let Err(error) = io::copy(&mut file, &mut content) {
+            warn!(entry = %name, %error, "failed to read embedded asset bytes");
+            continue;
+        }
+
+        files.insert(
+            name.clone(),
+            EmbeddedAsset {
+                bytes: content,
+                content_type: content_type_for_path(&name),
+            },
+        );
+    }
+
+    info!(
+        asset_count = files.len(),
+        "loaded embedded ui assets from executable zip payload"
+    );
+    EmbeddedAssets { files }
 }
 
 fn make_filename_safe_board_id(board_id: &str) -> String {

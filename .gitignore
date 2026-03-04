@@ -3,5 +3,7 @@ ui/test-results/
 ui/*.tsbuildinfo
 *.log
 target/
+/target/ui-assets.zip
 .pnpm-store/
 .tool-tool/v2/
+boards/

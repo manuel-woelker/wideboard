@@ -200,10 +200,10 @@ fn serve_asset_path(path: &str, assets: &EmbeddedAssets) -> Response {
 
     // Support SPA client-side routes by serving index.html when the requested path
     // does not look like a static file.
-    if !normalized.contains('.') {
-        if let Some(index_asset) = assets.files.get("index.html") {
-            return response_with_asset(StatusCode::OK, index_asset);
-        }
+    if !normalized.contains('.')
+        && let Some(index_asset) = assets.files.get("index.html")
+    {
+        return response_with_asset(StatusCode::OK, index_asset);
     }
 
     (StatusCode::NOT_FOUND, "Asset not found").into_response()
@@ -627,11 +627,11 @@ async fn handle_socket(socket: WebSocket, state: AppState, client_id: u64) {
             }
             Ok(Message::Ping(payload)) => {
                 let peers = state.clients.read().await;
-                if let Some(self_sender) = peers.get(&client_id) {
-                    if self_sender.send(Message::Pong(payload)).is_err() {
-                        warn!(client_id, "failed to queue pong response for client");
-                        break;
-                    }
+                if let Some(self_sender) = peers.get(&client_id)
+                    && self_sender.send(Message::Pong(payload)).is_err()
+                {
+                    warn!(client_id, "failed to queue pong response for client");
+                    break;
                 }
             }
             Ok(Message::Close(_)) => {

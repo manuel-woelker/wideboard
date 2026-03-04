@@ -1,0 +1,68 @@
+name: Build Server Artifact
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Ensure tool-tool is executable
+        run: chmod +x tool-tool
+
+      - name: Install UI dependencies
+        run: |
+          cd ui
+          ../tool-tool pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cd ui
+          ../tool-tool pnpm exec prettier --check .
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: |
+          cargo test --workspace
+          cd ui
+          ../tool-tool pnpm test
+
+      - name: Build UI assets and zip bundle
+        run: |
+          cd ui
+          ../tool-tool pnpm build
+          cd dist
+          zip -r ../../ui-assets.zip .
+
+      - name: Build release server and append UI bundle
+        run: |
+          cargo build --release -p server
+          cp target/release/server target/release/server-with-ui-assets
+          cat ui-assets.zip >> target/release/server-with-ui-assets
+          chmod +x target/release/server-with-ui-assets
+
+      - name: Upload bundled server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-with-ui-assets-${{ github.sha }}
+          path: target/release/server-with-ui-assets

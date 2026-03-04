@@ -24,6 +24,19 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache pnpm store and node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            .pnpm-store
+            ui/node_modules
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('ui/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
       - name: Ensure tool-tool is executable
         run: chmod +x tool-tool
 

@@ -28,6 +28,19 @@ struct WireBoardState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct WireBoardElementUpsert {
+    element: serde_json::Value,
+    index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct WireBoardElementChanges {
+    upserted: Vec<WireBoardElementUpsert>,
+    #[serde(rename = "removedIds")]
+    removed_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 enum ClientMessage {
     #[serde(rename = "mouse_moved")]
@@ -47,11 +60,11 @@ enum ClientMessage {
         #[serde(rename = "initialState")]
         initial_state: Option<WireBoardState>,
     },
-    #[serde(rename = "update_board_state")]
-    UpdateBoardState {
+    #[serde(rename = "update_board_elements")]
+    UpdateBoardElements {
         #[serde(rename = "boardId")]
         board_id: String,
-        state: WireBoardState,
+        changes: WireBoardElementChanges,
     },
 }
 
@@ -74,11 +87,11 @@ enum ServerMessage {
         board_id: String,
         state: WireBoardState,
     },
-    #[serde(rename = "board_state_updated")]
-    BoardStateUpdated {
+    #[serde(rename = "board_elements_updated")]
+    BoardElementsUpdated {
         #[serde(rename = "boardId")]
         board_id: String,
-        state: WireBoardState,
+        changes: WireBoardElementChanges,
     },
 }
 
@@ -140,6 +153,43 @@ fn encode_message(message: &ServerMessage) -> Option<Message> {
             error!(%error, "failed to serialize outbound websocket payload");
             None
         }
+    }
+}
+
+fn read_element_id(element: &serde_json::Value) -> Option<&str> {
+    element.get("id").and_then(serde_json::Value::as_str)
+}
+
+fn apply_board_element_changes(state: &mut WireBoardState, changes: &WireBoardElementChanges) {
+    if !changes.removed_ids.is_empty() {
+        state.elements.retain(|element| {
+            let Some(id) = read_element_id(element) else {
+                return true;
+            };
+            !changes
+                .removed_ids
+                .iter()
+                .any(|removed_id| removed_id == id)
+        });
+    }
+
+    for upsert in &changes.upserted {
+        let Some(element_id) = read_element_id(&upsert.element) else {
+            warn!("skipping board element upsert without string id");
+            continue;
+        };
+
+        state.elements.retain(|element| {
+            let Some(existing_id) = read_element_id(element) else {
+                return true;
+            };
+            existing_id != element_id
+        });
+
+        let insertion_index = upsert.index.min(state.elements.len());
+        state
+            .elements
+            .insert(insertion_index, upsert.element.clone());
     }
 }
 
@@ -236,19 +286,15 @@ async fn handle_socket(socket: WebSocket, state: AppState, client_id: u64) {
                             break;
                         }
                     }
-                    ClientMessage::UpdateBoardState {
-                        board_id,
-                        state: next_state,
-                    } => {
+                    ClientMessage::UpdateBoardElements { board_id, changes } => {
                         {
                             let mut boards = state.boards.write().await;
-                            boards.insert(board_id.clone(), next_state.clone());
+                            let board_state = boards.entry(board_id.clone()).or_default();
+                            apply_board_element_changes(board_state, &changes);
                         }
 
-                        let server_message = ServerMessage::BoardStateUpdated {
-                            board_id,
-                            state: next_state,
-                        };
+                        let server_message =
+                            ServerMessage::BoardElementsUpdated { board_id, changes };
                         broadcast_to_peers(&state, client_id, &server_message).await;
                     }
                 }

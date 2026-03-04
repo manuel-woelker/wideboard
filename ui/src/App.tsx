@@ -24,9 +24,25 @@ interface BoardStatePayload {
 }
 
 interface BoardStateMessage {
-  type: 'board_state' | 'board_state_updated';
+  type: 'board_state';
   boardId: string;
   state: BoardStatePayload;
+}
+
+interface BoardElementUpsert {
+  element: BoardElement;
+  index: number;
+}
+
+interface BoardElementChanges {
+  upserted: BoardElementUpsert[];
+  removedIds: string[];
+}
+
+interface BoardElementsUpdatedMessage {
+  type: 'board_elements_updated';
+  boardId: string;
+  changes: BoardElementChanges;
 }
 
 interface RequestBoardStateMessage {
@@ -35,10 +51,10 @@ interface RequestBoardStateMessage {
   initialState: BoardStatePayload;
 }
 
-interface UpdateBoardStateMessage {
-  type: 'update_board_state';
+interface UpdateBoardElementsMessage {
+  type: 'update_board_elements';
   boardId: string;
-  state: BoardStatePayload;
+  changes: BoardElementChanges;
 }
 
 interface RemotePointer {
@@ -222,7 +238,7 @@ function parseBoardStateMessage(rawPayload: string): BoardStateMessage | null {
       typeof parsed === 'object' &&
       parsed !== null &&
       'type' in parsed &&
-      (parsed.type === 'board_state' || parsed.type === 'board_state_updated') &&
+      parsed.type === 'board_state' &&
       'boardId' in parsed &&
       typeof parsed.boardId === 'string' &&
       'state' in parsed &&
@@ -240,17 +256,136 @@ function parseBoardStateMessage(rawPayload: string): BoardStateMessage | null {
   return null;
 }
 
+function parseBoardElementsUpdatedMessage(rawPayload: string): BoardElementsUpdatedMessage | null {
+  try {
+    const parsed: unknown = JSON.parse(rawPayload);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'type' in parsed &&
+      parsed.type === 'board_elements_updated' &&
+      'boardId' in parsed &&
+      typeof parsed.boardId === 'string' &&
+      'changes' in parsed &&
+      typeof parsed.changes === 'object' &&
+      parsed.changes !== null &&
+      'upserted' in parsed.changes &&
+      Array.isArray(parsed.changes.upserted) &&
+      'removedIds' in parsed.changes &&
+      Array.isArray(parsed.changes.removedIds)
+    ) {
+      return parsed as BoardElementsUpdatedMessage;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function cloneBoardElements(elements: ReadonlyArray<BoardElement>): BoardElement[] {
   return elements.map((element) => ({ ...element }));
 }
 
-function hasElementMutation(messageDeltas: Array<{ type: string }>) {
-  return messageDeltas.some(
-    (delta) =>
-      delta.type === 'element_added' ||
-      delta.type === 'element_removed' ||
-      delta.type === 'element_updated'
-  );
+function applyBoardElementChanges(
+  baseElements: ReadonlyArray<BoardElement>,
+  changes: BoardElementChanges
+): BoardElement[] {
+  const elementsById = new Map(baseElements.map((element) => [element.id, { ...element }]));
+  const orderedIds = baseElements.map((element) => element.id);
+
+  changes.removedIds.forEach((id) => {
+    elementsById.delete(id);
+    const existingIndex = orderedIds.indexOf(id);
+    if (existingIndex >= 0) {
+      orderedIds.splice(existingIndex, 1);
+    }
+  });
+
+  changes.upserted.forEach(({ element, index }) => {
+    elementsById.set(element.id, { ...element });
+    const existingIndex = orderedIds.indexOf(element.id);
+    if (existingIndex >= 0) {
+      orderedIds.splice(existingIndex, 1);
+    }
+    const insertionIndex = Math.max(0, Math.min(index, orderedIds.length));
+    orderedIds.splice(insertionIndex, 0, element.id);
+  });
+
+  const normalizedIds = orderedIds.filter((id) => elementsById.has(id));
+  elementsById.forEach((_element, id) => {
+    if (!normalizedIds.includes(id)) {
+      normalizedIds.push(id);
+    }
+  });
+
+  return normalizedIds
+    .map((id) => elementsById.get(id))
+    .filter((element): element is BoardElement => element !== undefined);
+}
+
+function buildBoardElementChanges(
+  deltas: Array<{ type: string; id?: string; element?: { id: string } }>,
+  currentElementsById: Record<string, BoardElement>,
+  currentElementOrder: string[]
+): BoardElementChanges | null {
+  const indexById = new Map(currentElementOrder.map((id, index) => [id, index]));
+  const upsertedById = new Map<string, BoardElementUpsert>();
+  const removedIds = new Set<string>();
+
+  deltas.forEach((delta) => {
+    if (delta.type === 'element_added') {
+      const id = delta.element?.id;
+      if (!id) {
+        return;
+      }
+      const element = currentElementsById[id];
+      if (!element) {
+        return;
+      }
+      upsertedById.set(id, {
+        element: { ...element },
+        index: indexById.get(id) ?? currentElementOrder.length
+      });
+      removedIds.delete(id);
+      return;
+    }
+
+    if (delta.type === 'element_updated') {
+      const id = delta.id;
+      if (!id) {
+        return;
+      }
+      const element = currentElementsById[id];
+      if (!element) {
+        return;
+      }
+      upsertedById.set(id, {
+        element: { ...element },
+        index: indexById.get(id) ?? currentElementOrder.length
+      });
+      removedIds.delete(id);
+      return;
+    }
+
+    if (delta.type === 'element_removed') {
+      const id = delta.element?.id;
+      if (!id) {
+        return;
+      }
+      upsertedById.delete(id);
+      removedIds.add(id);
+    }
+  });
+
+  if (upsertedById.size === 0 && removedIds.size === 0) {
+    return null;
+  }
+
+  return {
+    upserted: Array.from(upsertedById.values()).sort((left, right) => left.index - right.index),
+    removedIds: Array.from(removedIds)
+  };
 }
 
 export function App() {
@@ -288,24 +423,53 @@ export function App() {
     }
 
     const state = engine.getState();
-    const payload: UpdateBoardStateMessage = {
-      type: 'update_board_state',
+    const changes = buildBoardElementChanges(
+      stateUpdateDeltasRef.current,
+      state.elements,
+      state.elementOrder
+    );
+    if (!changes) {
+      return;
+    }
+
+    const payload: UpdateBoardElementsMessage = {
+      type: 'update_board_elements',
       boardId: DEFAULT_BOARD.id,
-      state: {
-        elements: state.elementOrder.map((id) => ({ ...state.elements[id] }))
-      }
+      changes
     };
     socket.send(JSON.stringify(payload));
   }, []);
+
+  const stateUpdateDeltasRef = useRef<
+    Array<{ type: string; id?: string; element?: { id: string } }>
+  >([]);
+
+  const applyIncomingBoardElementChanges = useCallback(
+    (changes: BoardElementChanges) => {
+      const engine = boardEngineRef.current;
+      if (!engine) {
+        const base = pendingBoardElementsRef.current ?? cloneBoardElements(DEFAULT_BOARD.elements);
+        pendingBoardElementsRef.current = applyBoardElementChanges(base, changes);
+        return;
+      }
+
+      const state = engine.getState();
+      const currentElements = state.elementOrder.map((id) => ({ ...state.elements[id] }));
+      const nextElements = applyBoardElementChanges(currentElements, changes);
+      applyIncomingBoardElements(nextElements);
+    },
+    [applyIncomingBoardElements]
+  );
 
   const handleBoardEngineReady = useCallback(
     (engine: BoardEngine) => {
       boardEngineRef.current = engine;
       unsubscribeBoardEngineRef.current?.();
       unsubscribeBoardEngineRef.current = engine.subscribe((update) => {
-        if (applyingRemoteBoardStateRef.current || !hasElementMutation(update.deltas)) {
+        if (applyingRemoteBoardStateRef.current) {
           return;
         }
+        stateUpdateDeltasRef.current = update.deltas.map((delta) => ({ ...delta }));
         sendBoardStateUpdate(engine);
       });
 
@@ -369,6 +533,12 @@ export function App() {
       const boardStateMessage = parseBoardStateMessage(event.data);
       if (boardStateMessage && boardStateMessage.boardId === DEFAULT_BOARD.id) {
         applyIncomingBoardElements(boardStateMessage.state.elements);
+        return;
+      }
+
+      const boardElementsUpdatedMessage = parseBoardElementsUpdatedMessage(event.data);
+      if (boardElementsUpdatedMessage && boardElementsUpdatedMessage.boardId === DEFAULT_BOARD.id) {
+        applyIncomingBoardElementChanges(boardElementsUpdatedMessage.changes);
         return;
       }
 

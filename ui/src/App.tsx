@@ -1,7 +1,8 @@
 import { Global, css } from '@emotion/react';
 import styled from '@emotion/styled';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BoardComponent, type BoardElement } from './board/BoardComponent';
+import type { BoardEngine } from './board/engine/BoardEngine';
 import elephantImage from '../assets/elephant.jpg';
 
 interface BoardModel {
@@ -16,6 +17,28 @@ interface MouseMovedMessage {
   name: string;
   boardX: number;
   boardY: number;
+}
+
+interface BoardStatePayload {
+  elements: BoardElement[];
+}
+
+interface BoardStateMessage {
+  type: 'board_state' | 'board_state_updated';
+  boardId: string;
+  state: BoardStatePayload;
+}
+
+interface RequestBoardStateMessage {
+  type: 'request_board_state';
+  boardId: string;
+  initialState: BoardStatePayload;
+}
+
+interface UpdateBoardStateMessage {
+  type: 'update_board_state';
+  boardId: string;
+  state: BoardStatePayload;
 }
 
 interface RemotePointer {
@@ -192,11 +215,107 @@ function parseMouseMovedMessage(rawPayload: string): MouseMovedMessage | null {
   return null;
 }
 
+function parseBoardStateMessage(rawPayload: string): BoardStateMessage | null {
+  try {
+    const parsed: unknown = JSON.parse(rawPayload);
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'type' in parsed &&
+      (parsed.type === 'board_state' || parsed.type === 'board_state_updated') &&
+      'boardId' in parsed &&
+      typeof parsed.boardId === 'string' &&
+      'state' in parsed &&
+      typeof parsed.state === 'object' &&
+      parsed.state !== null &&
+      'elements' in parsed.state &&
+      Array.isArray(parsed.state.elements)
+    ) {
+      return parsed as BoardStateMessage;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function cloneBoardElements(elements: ReadonlyArray<BoardElement>): BoardElement[] {
+  return elements.map((element) => ({ ...element }));
+}
+
+function hasElementMutation(messageDeltas: Array<{ type: string }>) {
+  return messageDeltas.some(
+    (delta) =>
+      delta.type === 'element_added' ||
+      delta.type === 'element_removed' ||
+      delta.type === 'element_updated'
+  );
+}
+
 export function App() {
   const [remotePointers, setRemotePointers] = useState<Record<string, RemotePointer>>({});
   const participantId = useMemo(() => createParticipantId(), []);
   const participantName = useMemo(() => createRandomParticipantName(), []);
   const sendPointerRef = useRef<(position: { x: number; y: number }) => void>(() => {});
+  const socketRef = useRef<WebSocket | null>(null);
+  const boardEngineRef = useRef<BoardEngine | null>(null);
+  const pendingBoardElementsRef = useRef<BoardElement[] | null>(null);
+  const applyingRemoteBoardStateRef = useRef(false);
+  const unsubscribeBoardEngineRef = useRef<(() => void) | null>(null);
+
+  const applyIncomingBoardElements = useCallback((elements: BoardElement[]) => {
+    const engine = boardEngineRef.current;
+    if (!engine) {
+      pendingBoardElementsRef.current = elements;
+      return;
+    }
+
+    applyingRemoteBoardStateRef.current = true;
+    try {
+      engine.dispatch.setElements({
+        elements: cloneBoardElements(elements)
+      });
+    } finally {
+      applyingRemoteBoardStateRef.current = false;
+    }
+  }, []);
+
+  const sendBoardStateUpdate = useCallback((engine: BoardEngine) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const state = engine.getState();
+    const payload: UpdateBoardStateMessage = {
+      type: 'update_board_state',
+      boardId: DEFAULT_BOARD.id,
+      state: {
+        elements: state.elementOrder.map((id) => ({ ...state.elements[id] }))
+      }
+    };
+    socket.send(JSON.stringify(payload));
+  }, []);
+
+  const handleBoardEngineReady = useCallback(
+    (engine: BoardEngine) => {
+      boardEngineRef.current = engine;
+      unsubscribeBoardEngineRef.current?.();
+      unsubscribeBoardEngineRef.current = engine.subscribe((update) => {
+        if (applyingRemoteBoardStateRef.current || !hasElementMutation(update.deltas)) {
+          return;
+        }
+        sendBoardStateUpdate(engine);
+      });
+
+      if (pendingBoardElementsRef.current) {
+        applyIncomingBoardElements(pendingBoardElementsRef.current);
+        pendingBoardElementsRef.current = null;
+      }
+    },
+    [applyIncomingBoardElements, sendBoardStateUpdate]
+  );
 
   useEffect(() => {
     document.title = DEFAULT_BOARD.name;
@@ -212,6 +331,7 @@ export function App() {
     }
 
     const socket = new WebSocket(resolveWebSocketUrl());
+    socketRef.current = socket;
 
     const onPointerMove = (position: { x: number; y: number }) => {
       if (socket.readyState !== WebSocket.OPEN) {
@@ -230,8 +350,25 @@ export function App() {
 
     sendPointerRef.current = onPointerMove;
 
+    socket.onopen = () => {
+      const payload: RequestBoardStateMessage = {
+        type: 'request_board_state',
+        boardId: DEFAULT_BOARD.id,
+        initialState: {
+          elements: cloneBoardElements(DEFAULT_BOARD.elements)
+        }
+      };
+      socket.send(JSON.stringify(payload));
+    };
+
     socket.onmessage = (event) => {
       if (typeof event.data !== 'string') {
+        return;
+      }
+
+      const boardStateMessage = parseBoardStateMessage(event.data);
+      if (boardStateMessage && boardStateMessage.boardId === DEFAULT_BOARD.id) {
+        applyIncomingBoardElements(boardStateMessage.state.elements);
         return;
       }
 
@@ -270,9 +407,17 @@ export function App() {
     return () => {
       sendPointerRef.current = () => {};
       window.clearInterval(stalePointerCleanupInterval);
+      socketRef.current = null;
       socket.close();
     };
   }, [participantId, participantName]);
+
+  useEffect(() => {
+    return () => {
+      unsubscribeBoardEngineRef.current?.();
+      unsubscribeBoardEngineRef.current = null;
+    };
+  }, []);
 
   return (
     <Shell>
@@ -294,6 +439,7 @@ export function App() {
       <BoardComponent
         boardId={DEFAULT_BOARD.id}
         initialElements={DEFAULT_BOARD.elements}
+        onEngineReady={handleBoardEngineReady}
         onBoardPointerMove={(point) => {
           sendPointerRef.current(point);
         }}

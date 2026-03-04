@@ -7,29 +7,14 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Welcome board' })).toBeInTheDocument();
   });
 
-  it('renders the note element text', () => {
+  it('shows a loading indicator while board state is loading', () => {
     render(<App />);
-    expect(screen.getByText(/Welcome to wideboard\./)).toBeInTheDocument();
-  });
-
-  it('renders two additional default tip notes', () => {
-    render(<App />);
-    expect(screen.getByText(/Tip: Click a note to activate it\./)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Tip: Use \+ Note in the toolbar, then click the board to place a new note\./
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText('Loading board...')).toBeInTheDocument();
   });
 
   it('uses welcome as the default board id', () => {
     render(<App />);
     expect(screen.getByTestId('board-component')).toHaveAttribute('data-board-id', 'welcome');
-  });
-
-  it('renders the welcome elephant image', () => {
-    render(<App />);
-    expect(screen.getByAltText('Elephant in the welcome board')).toBeInTheDocument();
   });
 
   it('renders a local participant label', () => {

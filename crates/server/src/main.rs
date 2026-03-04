@@ -1,9 +1,12 @@
 use std::{
     collections::HashMap,
+    io,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use axum::{
@@ -22,9 +25,18 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 
+const BOARD_SAVE_DIRECTORY: &str = "boards";
+const BOARD_SAVE_INTERVAL: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct WireBoardState {
     elements: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+struct BoardEntry {
+    state: WireBoardState,
+    modified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +110,7 @@ enum ServerMessage {
 #[derive(Clone)]
 struct AppState {
     clients: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<Message>>>>,
-    boards: Arc<RwLock<HashMap<String, WireBoardState>>>,
+    boards: Arc<RwLock<HashMap<String, BoardEntry>>>,
     next_client_id: Arc<AtomicU64>,
 }
 
@@ -111,11 +123,17 @@ async fn main() {
         .with_target(true)
         .init();
 
+    tokio::fs::create_dir_all(BOARD_SAVE_DIRECTORY)
+        .await
+        .expect("failed to create board persistence directory");
+
     let app_state = AppState {
         clients: Arc::new(RwLock::new(HashMap::new())),
         boards: Arc::new(RwLock::new(HashMap::new())),
         next_client_id: Arc::new(AtomicU64::new(1)),
     };
+
+    spawn_board_persistence_task(app_state.clone());
 
     let app = Router::new()
         .route("/ws", get(websocket_handler))
@@ -160,6 +178,91 @@ fn read_element_id(element: &serde_json::Value) -> Option<&str> {
     element.get("id").and_then(serde_json::Value::as_str)
 }
 
+fn make_filename_safe_board_id(board_id: &str) -> String {
+    let mut safe: String = board_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if safe.is_empty() {
+        safe = "board".to_string();
+    }
+
+    format!("{safe}.json")
+}
+
+fn board_file_path(board_id: &str) -> PathBuf {
+    let mut path = PathBuf::from(BOARD_SAVE_DIRECTORY);
+    path.push(make_filename_safe_board_id(board_id));
+    path
+}
+
+async fn load_board_state_from_disk(board_id: &str) -> Option<WireBoardState> {
+    let file_path = board_file_path(board_id);
+    let bytes = match tokio::fs::read(&file_path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            warn!(board_id, path = %file_path.display(), %error, "failed to read board save file");
+            return None;
+        }
+    };
+
+    match serde_json::from_slice::<WireBoardState>(&bytes) {
+        Ok(state) => Some(state),
+        Err(error) => {
+            warn!(board_id, path = %file_path.display(), %error, "failed to deserialize board save file");
+            None
+        }
+    }
+}
+
+async fn save_board_state_to_disk(board_id: &str, board_state: &WireBoardState) -> io::Result<()> {
+    let file_path = board_file_path(board_id);
+    let content = serde_json::to_vec_pretty(board_state)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    tokio::fs::write(&file_path, content).await
+}
+
+async fn ensure_board_loaded(
+    app_state: &AppState,
+    board_id: &str,
+    initial_state: Option<WireBoardState>,
+) -> WireBoardState {
+    {
+        let boards = app_state.boards.read().await;
+        if let Some(entry) = boards.get(board_id) {
+            return entry.state.clone();
+        }
+    }
+
+    let disk_state = load_board_state_from_disk(board_id).await;
+
+    let mut boards = app_state.boards.write().await;
+    if let Some(entry) = boards.get(board_id) {
+        return entry.state.clone();
+    }
+
+    let resolved_state = disk_state
+        .or(initial_state)
+        .unwrap_or_else(WireBoardState::default);
+    boards.insert(
+        board_id.to_string(),
+        BoardEntry {
+            state: resolved_state.clone(),
+            modified: false,
+        },
+    );
+
+    resolved_state
+}
+
 fn apply_board_element_changes(state: &mut WireBoardState, changes: &WireBoardElementChanges) {
     if !changes.removed_ids.is_empty() {
         state.elements.retain(|element| {
@@ -190,6 +293,43 @@ fn apply_board_element_changes(state: &mut WireBoardState, changes: &WireBoardEl
         state
             .elements
             .insert(insertion_index, upsert.element.clone());
+    }
+}
+
+fn spawn_board_persistence_task(app_state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(BOARD_SAVE_INTERVAL);
+        loop {
+            interval.tick().await;
+            persist_modified_boards(&app_state).await;
+        }
+    });
+}
+
+async fn persist_modified_boards(app_state: &AppState) {
+    let dirty_snapshots = {
+        let mut boards = app_state.boards.write().await;
+        boards
+            .iter_mut()
+            .filter_map(|(board_id, entry)| {
+                if !entry.modified {
+                    return None;
+                }
+
+                entry.modified = false;
+                Some((board_id.clone(), entry.state.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    for (board_id, board_state) in dirty_snapshots {
+        if let Err(error) = save_board_state_to_disk(&board_id, &board_state).await {
+            error!(board_id, %error, "failed to persist board state");
+            let mut boards = app_state.boards.write().await;
+            if let Some(entry) = boards.get_mut(&board_id) {
+                entry.modified = true;
+            }
+        }
     }
 }
 
@@ -265,13 +405,8 @@ async fn handle_socket(socket: WebSocket, state: AppState, client_id: u64) {
                         board_id,
                         initial_state,
                     } => {
-                        let board_state = {
-                            let mut boards = state.boards.write().await;
-                            let entry = boards
-                                .entry(board_id.clone())
-                                .or_insert_with(|| initial_state.unwrap_or_default());
-                            entry.clone()
-                        };
+                        let board_state =
+                            ensure_board_loaded(&state, &board_id, initial_state).await;
 
                         let server_message = ServerMessage::BoardState {
                             board_id,
@@ -287,10 +422,15 @@ async fn handle_socket(socket: WebSocket, state: AppState, client_id: u64) {
                         }
                     }
                     ClientMessage::UpdateBoardElements { board_id, changes } => {
+                        let _ = ensure_board_loaded(&state, &board_id, None).await;
                         {
                             let mut boards = state.boards.write().await;
-                            let board_state = boards.entry(board_id.clone()).or_default();
-                            apply_board_element_changes(board_state, &changes);
+                            let Some(board_entry) = boards.get_mut(&board_id) else {
+                                warn!(board_id, "board missing after load attempt during update");
+                                continue;
+                            };
+                            apply_board_element_changes(&mut board_entry.state, &changes);
+                            board_entry.modified = true;
                         }
 
                         let server_message =

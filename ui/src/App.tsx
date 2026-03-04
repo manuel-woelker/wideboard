@@ -390,6 +390,7 @@ function buildBoardElementChanges(
 
 export function App() {
   const [remotePointers, setRemotePointers] = useState<Record<string, RemotePointer>>({});
+  const [isBoardLoading, setIsBoardLoading] = useState(true);
   const participantId = useMemo(() => createParticipantId(), []);
   const participantName = useMemo(() => createRandomParticipantName(), []);
   const sendPointerRef = useRef<(position: { x: number; y: number }) => void>(() => {});
@@ -533,12 +534,14 @@ export function App() {
       const boardStateMessage = parseBoardStateMessage(event.data);
       if (boardStateMessage && boardStateMessage.boardId === DEFAULT_BOARD.id) {
         applyIncomingBoardElements(boardStateMessage.state.elements);
+        setIsBoardLoading(false);
         return;
       }
 
       const boardElementsUpdatedMessage = parseBoardElementsUpdatedMessage(event.data);
       if (boardElementsUpdatedMessage && boardElementsUpdatedMessage.boardId === DEFAULT_BOARD.id) {
         applyIncomingBoardElementChanges(boardElementsUpdatedMessage.changes);
+        setIsBoardLoading(false);
         return;
       }
 
@@ -606,9 +609,12 @@ export function App() {
       />
       <OverlayTitle>{DEFAULT_BOARD.name} board</OverlayTitle>
       <OverlayParticipant>You: {participantName}</OverlayParticipant>
+      {isBoardLoading ? (
+        <OverlayParticipant style={{ top: '5.5rem' }}>Loading board...</OverlayParticipant>
+      ) : null}
       <BoardComponent
         boardId={DEFAULT_BOARD.id}
-        initialElements={DEFAULT_BOARD.elements}
+        initialElements={[]}
         onEngineReady={handleBoardEngineReady}
         onBoardPointerMove={(point) => {
           sendPointerRef.current(point);
